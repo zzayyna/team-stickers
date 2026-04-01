@@ -1,98 +1,270 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, Modal } from 'react-native';
+import { useState } from 'react';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+const FAMILY_HISTORY_OPTIONS = [
+  'Diabetes', 'Breast Cancer', 'Heart Disease',
+  'High Blood Pressure', 'Alzheimer\'s', 'Asthma', 'Stroke'
+];
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const [firstName, setFirstName] = useState('John');
+  const [middleInitial, setMiddleInitial] = useState('A');
+  const [lastName, setLastName] = useState('Mango');
+  const [dob, setDob] = useState('07/22/1967');
+  const [allergies, setAllergies] = useState('N/A');
+  const [hospitalizations, setHospitalizations] = useState('N/A');
+  const [familyHistory, setFamilyHistory] = useState(['Father: Diabetes', 'Grandmother: Breast Cancer']);
+  const [dropdownVisible, setDropdownVisible] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState('');
+  const [selectedCondition, setSelectedCondition] = useState('');
+  const [conditionPickerVisible, setConditionPickerVisible] = useState(false);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  const addFamilyHistory = () => {
+    if (selectedPerson && selectedCondition) {
+      setFamilyHistory([...familyHistory, `${selectedPerson}: ${selectedCondition}`]);
+      setSelectedPerson('');
+      setSelectedCondition('');
+      setDropdownVisible(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <ScrollView style={styles.container}>
+
+        {/* Patient Information Card */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Patient Information</Text>
+
+          <View style={styles.row}>
+            <View style={[styles.inputGroup, { flex: 2 }]}>
+              <Text style={styles.label}>First Name</Text>
+              <TextInput style={styles.input} value={firstName} onChangeText={setFirstName} />
+            </View>
+            <View style={[styles.inputGroup, { flex: 1, marginHorizontal: 8 }]}>
+              <Text style={styles.label}>Middle Initial</Text>
+              <TextInput style={styles.input} value={middleInitial} onChangeText={setMiddleInitial} maxLength={1} />
+            </View>
+            <View style={[styles.inputGroup, { flex: 2 }]}>
+              <Text style={styles.label}>Last Name</Text>
+              <TextInput style={styles.input} value={lastName} onChangeText={setLastName} />
+            </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Date of Birth</Text>
+            <TextInput style={styles.input} value={dob} onChangeText={setDob} placeholder="MM/DD/YYYY" keyboardType="numeric" />
+          </View>
+
+          <Text style={styles.italicLabel}>Insurance Information Attached</Text>
+          <TouchableOpacity style={styles.button}>
+            <Text style={styles.buttonText}>Update Insurance Information</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Medical History Card */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Medical History</Text>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Known Allergies</Text>
+            <TextInput style={styles.input} value={allergies} onChangeText={setAllergies} />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Recent Hospitalizations</Text>
+            <TextInput style={styles.input} value={hospitalizations} onChangeText={setHospitalizations} />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Family History</Text>
+            {familyHistory.map((item, index) => (
+              <Text key={index} style={styles.familyItem}>{item}</Text>
+            ))}
+          </View>
+
+          {/* Add More Dropdown */}
+          <TouchableOpacity style={styles.dropdown} onPress={() => setDropdownVisible(true)}>
+            <Text style={styles.dropdownText}>Add More ▾</Text>
+          </TouchableOpacity>
+        </View>
+
+      </ScrollView>
+
+      {/* Add Family History Modal */}
+      <Modal visible={dropdownVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Add Family History</Text>
+
+            <Text style={styles.label}>Family Member</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Father, Mother, Grandmother"
+              value={selectedPerson}
+              onChangeText={setSelectedPerson}
+            />
+
+            <Text style={[styles.label, { marginTop: 12 }]}>Condition</Text>
+            <TouchableOpacity style={styles.dropdown} onPress={() => setConditionPickerVisible(!conditionPickerVisible)}>
+              <Text style={styles.dropdownText}>{selectedCondition || 'Select a condition ▾'}</Text>
+            </TouchableOpacity>
+
+            {conditionPickerVisible && (
+              <View style={styles.optionsList}>
+                {FAMILY_HISTORY_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    style={styles.optionItem}
+                    onPress={() => { setSelectedCondition(option); setConditionPickerVisible(false); }}
+                  >
+                    <Text style={styles.optionText}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.cancelButton} onPress={() => setDropdownVisible(false)}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.button} onPress={addFamilyHistory}>
+                <Text style={styles.buttonText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  safe: {
+    flex: 1,
+    backgroundColor: '#f5f0eb',
   },
-  stepContainer: {
-    gap: 8,
+  container: {
+    flex: 1,
+    padding: 16,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  row: {
+    flexDirection: 'row',
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  inputGroup: {
+    marginBottom: 12,
+  },
+  label: {
+    fontSize: 12,
+    color: '#555',
+    marginBottom: 4,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 6,
+    padding: 8,
+    fontSize: 14,
+    color: '#000',
+    backgroundColor: '#fff',
+  },
+  italicLabel: {
+    fontStyle: 'italic',
+    fontSize: 13,
+    color: '#444',
+    marginBottom: 8,
+  },
+  button: {
+    backgroundColor: '#2d4f5c',
+    borderRadius: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  familyItem: {
+    color: '#7a9a8a',
+    fontStyle: 'italic',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  dropdown: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 4,
+  },
+  dropdownText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  optionsList: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  optionItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  optionText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 20,
+  },
+  cancelButton: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  cancelText: {
+    color: '#555',
+    fontSize: 14,
   },
 });
