@@ -1,10 +1,11 @@
+import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { 
-  StyleSheet, 
-  TextInput, 
-  TouchableOpacity, 
-  FlatList, 
-  KeyboardAvoidingView, 
+import {
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  KeyboardAvoidingView,
   Platform,
   View,
   Text,
@@ -25,7 +26,7 @@ const INITIAL_MESSAGES = [
 export default function TestChatScreen() {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState('');
-  
+
   // State for the Info Modal
   const [infoModalVisible, setInfoModalVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<typeof INITIAL_MESSAGES[0] | null>(null);
@@ -48,13 +49,13 @@ export default function TestChatScreen() {
     return (
       <View style={[styles.messageRow, isAI ? styles.aiRow : styles.userRow]}>
         {isAI && <IconSymbol name="brain.head.profile" size={24} color="#808080" style={styles.aiIcon} />}
-        
+
         <View style={[styles.bubble, isAI ? styles.aiBubble : styles.userBubble]}>
           <Text style={[styles.messageText, isAI ? styles.aiText : styles.userText]}>
             {item.text}
           </Text>
         </View>
-        
+
         {/* Wrapped the Info Icon in a TouchableOpacity */}
         {isAI && (
           <TouchableOpacity onPress={() => handleInfoPress(item)} style={styles.infoButton}>
@@ -68,8 +69,14 @@ export default function TestChatScreen() {
   return (
     <ThemedView style={styles.fullScreen}>
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        <TouchableOpacity
+          style={{ margin: 16, backgroundColor: '#007AFF', padding: 14, borderRadius: 12, alignItems: 'center' }}
+          onPress={() => router.push('/form')}
+        >
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Continue to Form</Text>
+        </TouchableOpacity>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.container}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
@@ -98,10 +105,10 @@ export default function TestChatScreen() {
                   <IconSymbol name="mic" size={22} color="#666" />
                 </View>
                 <TouchableOpacity onPress={sendMessage} style={styles.sendButton}>
-                  <IconSymbol 
-                    name="arrow.up.circle.fill" 
-                    size={32} 
-                    color={inputText.length > 0 ? "#007AFF" : "#D1D1D6"} 
+                  <IconSymbol
+                    name="arrow.up.circle.fill"
+                    size={32}
+                    color={inputText.length > 0 ? "#007AFF" : "#D1D1D6"}
                   />
                 </TouchableOpacity>
               </View>
@@ -119,10 +126,10 @@ export default function TestChatScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Question Details</Text>
-              
+
               <Text style={styles.modalSubtitle}>Plain Language Definition:</Text>
               <Text style={styles.modalText}>
-                {selectedMessage?.id === '3' 
+                {selectedMessage?.id === '3'
                   ? "A migraine is a severe, throbbing headache that can cause sensitivity to light and sound."
                   : "We use standard medical terms to ensure accuracy, but we are here to clarify any confusing words!"}
               </Text>
@@ -134,8 +141,8 @@ export default function TestChatScreen() {
                   : "This information helps personalize your care plan and ensures we ask the right follow-up questions specifically for you."}
               </Text>
 
-              <TouchableOpacity 
-                style={styles.closeModalButton} 
+              <TouchableOpacity
+                style={styles.closeModalButton}
                 onPress={() => setInfoModalVisible(false)}
               >
                 <Text style={styles.closeModalButtonText}>Got it</Text>
@@ -197,14 +204,14 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   aiIcon: { marginBottom: 4 },
-  
+
   // Updated Info Button Style
   infoButton: {
     marginLeft: 8,
     marginBottom: 12,
     padding: 5, // Makes the touch area slightly larger
   },
-  
+
   inputWrapper: {
     paddingHorizontal: 16,
     paddingBottom: 20,
