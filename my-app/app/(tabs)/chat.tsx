@@ -1,433 +1,743 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
   View,
-  Text,
-  Modal,
-  Image,
-  ActivityIndicator
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker'; 
-
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAiAssistant } from '../../context/AiAssistantContext';
+import { type RelevantVisitField, useIntake } from '../../context/IntakeContext';
+import { usePatientProfile } from '../../context/PatientProfileContext';
 
 type Message = {
   id: string;
   text: string;
   sender: 'user' | 'ai';
-  imageUri?: string;
-  isAudio?: boolean;
   plainLanguageDefinition?: string;
   whyWeAreAsking?: string;
 };
 
-const INITIAL_MESSAGES: Message[] = [
-  { 
-    id: '1', 
-    text: "Welcome back, John! What's the reason for your visit?", 
-    sender: 'ai',
-    plainLanguageDefinition: "We use standard medical terms to ensure accuracy, but we are here to clarify any confusing words!",
-    whyWeAreAsking: "This information helps personalize your care plan and ensures we ask the right follow-up questions."
+type AgentResponse = {
+  mode: 'intake_question' | 'clarification_needed' | 'form_review';
+  display_message: string;
+  plain_language_definition: string;
+  why_we_are_asking: string;
+  current_focus_label: string;
+  visit_context: {
+    section_title: string;
+    section_subtitle: string;
+    visit_category: string;
+    chief_concern: string;
+    summary_for_clinician: string;
+    relevant_fields: RelevantVisitField[];
+    source_note?: string;
+  };
+  additional_concerns?: {
+    patient_notes?: string;
+    ai_drafted_notes?: string;
+  };
+};
+
+const DEFAULT_HELPER = {
+  plainLanguageDefinition: 'This assistant helps organize a visit-specific intake summary from your own words.',
+  whyWeAreAsking: 'The care team gets a cleaner, more relevant draft when the assistant asks only the questions that fit this visit.',
+};
+
+const DEFAULT_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+
+const SYSTEM_INSTRUCTION = `You are a Medical Intake Form Helper embedded inside a patient check-in interface.
+
+Your job is to guide a patient through a medical intake conversation in a clear, supportive, and simple way. You are helping build one dynamic visit-specific intake section behind the scenes as the patient answers questions.
+
+High-level goal:
+- Do NOT behave like a fixed questionnaire.
+- Infer what kind of visit this is from the patient's words.
+- Ask only the most relevant next question for THIS visit.
+- Build a dynamic clinician-facing section that changes based on the visit.
+
+Core behavior:
+- Ask only 1 main question at a time.
+- Keep the visible chat question short, natural, and patient-friendly.
+- Do not give diagnoses, treatment plans, urgency advice, or medical advice.
+- Focus only on collecting visit intake information.
+- Use the patient's meaning, but rewrite the draft in cleaner clinician-friendly wording.
+- Correct obvious spelling mistakes when the meaning is clear. Example: if the patient types "comrooked" and clearly means "crooked", use "crooked" in the draft.
+- Preserve uncertainty when the patient is unsure. Do not guess.
+- Do not force every visit into the same fixed fields or the same question order.
+- Omit irrelevant fields. Add only fields that matter for this visit.
+- Background profile, insurance, and medical history are already handled elsewhere. Your main job is the visit-specific section and any optional extra note.
+
+Questioning strategy:
+- First understand the main concern.
+- Then infer the likely visit type from the conversation.
+- Ask the next most useful follow-up based on what is already known and what is still missing.
+- Avoid repeating information the patient already gave.
+- Ask fewer questions when the draft is already useful.
+- Switch to form_review mode as soon as there is enough meaningful information for a clinician-facing draft.
+
+Drafting strategy:
+- Generate a visit-specific section title and subtitle based on the appointment.
+- Generate a polished summary_for_clinician in normal clinician-friendly language.
+- relevant_fields should be dynamic and visit-specific, not a recycled template.
+- Normalize patient wording where appropriate.
+- If a patient gives a typo or lay wording, rewrite it clearly in the draft while preserving the intended meaning.
+- relevant_fields should capture clinically useful details like location, onset, trigger, severity pattern, associated symptoms, visible changes, etc only when relevant.
+
+Output rules:
+- Return JSON only.
+- display_message is the only text shown in the chat bubble.
+- plain_language_definition and why_we_are_asking are hidden support fields for the interface.
+- current_focus_label should be a short label describing what you are asking for right now.
+- visit_context.section_title should be tailored to the visit, such as "Finger Injury Summary" or "Back Pain Summary".
+- visit_context.section_subtitle should briefly explain what this generated section covers.
+- visit_context.visit_category should be a concise normalized category.
+- visit_context.chief_concern should be a cleaned-up concise version of the patient's main concern.
+- visit_context.summary_for_clinician should be a polished summary written for a clinician, based on the patient's meaning.
+- visit_context.relevant_fields should be an array of only the relevant fields for this visit.
+- Each relevant field must have key, label, value, and source.
+- source must be either "patient" or "ai_summary".
+- additional_concerns.patient_notes can stay as the patient's own wording if they add one more thing.
+- additional_concerns.ai_drafted_notes may be a cleaner version if useful.
+- If information is not provided, leave the field out or use "Not provided" only when necessary.
+- Never include markdown fences.`;
+
+function makeId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function extractTextFromGemini(data: any): string {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) {
+    throw new Error('No model response returned.');
   }
-];
+  return parts.map((part: any) => part?.text || '').join('').trim();
+}
 
-export default function ChatScreen() {
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+function stripCodeFences(text: string) {
+  return text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
+}
+
+function normalizeRelevantFields(fields: any): RelevantVisitField[] {
+  if (!Array.isArray(fields)) return [];
+  return fields
+    .map((field, index) => ({
+      key: String(field?.key || `field_${index + 1}`),
+      label: String(field?.label || `Detail ${index + 1}`),
+      value: String(field?.value || ''),
+      source: field?.source === 'patient' ? 'patient' : 'ai_summary',
+    }))
+    .filter((field) => field.label.trim() || field.value.trim());
+}
+
+function normalizeAgentResponse(raw: any): AgentResponse {
+  return {
+    mode: raw?.mode === 'clarification_needed' || raw?.mode === 'form_review' ? raw.mode : 'intake_question',
+    display_message: String(raw?.display_message || 'Could you tell me a little more about what brought you in today?'),
+    plain_language_definition: String(raw?.plain_language_definition || DEFAULT_HELPER.plainLanguageDefinition),
+    why_we_are_asking: String(raw?.why_we_are_asking || DEFAULT_HELPER.whyWeAreAsking),
+    current_focus_label: String(raw?.current_focus_label || 'Visit details'),
+    visit_context: {
+      section_title: String(raw?.visit_context?.section_title || ''),
+      section_subtitle: String(raw?.visit_context?.section_subtitle || ''),
+      visit_category: String(raw?.visit_context?.visit_category || ''),
+      chief_concern: String(raw?.visit_context?.chief_concern || ''),
+      summary_for_clinician: String(raw?.visit_context?.summary_for_clinician || ''),
+      relevant_fields: normalizeRelevantFields(raw?.visit_context?.relevant_fields),
+      source_note: String(raw?.visit_context?.source_note || 'AI drafted from your current chat responses and tailored to this visit.'),
+    },
+    additional_concerns: {
+      patient_notes: String(raw?.additional_concerns?.patient_notes || ''),
+      ai_drafted_notes: String(raw?.additional_concerns?.ai_drafted_notes || ''),
+    },
+  };
+}
+
+const AGENT_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    mode: { type: 'STRING', enum: ['intake_question', 'clarification_needed', 'form_review'] },
+    display_message: { type: 'STRING' },
+    plain_language_definition: { type: 'STRING' },
+    why_we_are_asking: { type: 'STRING' },
+    current_focus_label: { type: 'STRING' },
+    visit_context: {
+      type: 'OBJECT',
+      properties: {
+        section_title: { type: 'STRING' },
+        section_subtitle: { type: 'STRING' },
+        visit_category: { type: 'STRING' },
+        chief_concern: { type: 'STRING' },
+        summary_for_clinician: { type: 'STRING' },
+        source_note: { type: 'STRING' },
+        relevant_fields: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              key: { type: 'STRING' },
+              label: { type: 'STRING' },
+              value: { type: 'STRING' },
+              source: { type: 'STRING', enum: ['patient', 'ai_summary'] },
+            },
+            required: ['key', 'label', 'value', 'source'],
+          },
+        },
+      },
+      required: ['section_title', 'section_subtitle', 'visit_category', 'chief_concern', 'summary_for_clinician', 'relevant_fields'],
+    },
+    additional_concerns: {
+      type: 'OBJECT',
+      properties: {
+        patient_notes: { type: 'STRING' },
+        ai_drafted_notes: { type: 'STRING' },
+      },
+    },
+  },
+  required: ['mode', 'display_message', 'plain_language_definition', 'why_we_are_asking', 'current_focus_label', 'visit_context'],
+};
+
+function buildPayload(args: {
+  profile: ReturnType<typeof usePatientProfile>['profile'];
+  draftForm: ReturnType<typeof useIntake>['draftForm'];
+  conversation: Message[];
+  isInitialTurn: boolean;
+}) {
+  const { profile, draftForm, conversation, isInitialTurn } = args;
+
+  return {
+    is_initial_turn: isInitialTurn,
+    patient_profile_summary: {
+      full_name: `${profile.firstName} ${profile.lastName}`.trim(),
+      upcoming_provider: profile.upcomingProvider,
+      upcoming_time: profile.upcomingTime,
+      upcoming_visit_type: profile.upcomingVisitType,
+    },
+    background_sections_already_autofilled: {
+      patient_information: draftForm.patient_information,
+      insurance_information: draftForm.insurance_information,
+      medical_history: draftForm.medical_history,
+    },
+    current_dynamic_visit_section: draftForm.visit_context,
+    current_additional_concerns: draftForm.additional_concerns,
+    conversation: conversation.map((message) => ({
+      role: message.sender === 'ai' ? 'assistant' : 'patient',
+      text: message.text,
+    })),
+  };
+}
+
+async function requestGeminiAgent(args: {
+  apiKey: string;
+  apiUrl: string;
+  profile: ReturnType<typeof usePatientProfile>['profile'];
+  draftForm: ReturnType<typeof useIntake>['draftForm'];
+  conversation: Message[];
+  isInitialTurn: boolean;
+}) {
+  const body = {
+    systemInstruction: {
+      parts: [{ text: SYSTEM_INSTRUCTION }],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: JSON.stringify(buildPayload(args)),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.45,
+      topP: 0.9,
+      responseMimeType: 'application/json',
+      responseSchema: AGENT_RESPONSE_SCHEMA,
+    },
+  };
+
+  const baseUrl = (args.apiUrl || DEFAULT_API_URL).trim();
+  const url = `${baseUrl}?key=${args.apiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const message = data?.error?.message || 'Gemini request failed.';
+    throw new Error(message);
+  }
+
+  const rawText = stripCodeFences(extractTextFromGemini(data));
+  return normalizeAgentResponse(JSON.parse(rawText));
+}
+
+export default function ChatTab() {
+  const insets = useSafeAreaInsets();
+  const { isAiEnabled, hasAcceptedPrivacy, acceptPrivacy, disableAi } = useAiAssistant();
+  const { profile } = usePatientProfile();
+  const {
+    draftForm,
+    applyAgentDraft,
+    currentRequestedField,
+    setCurrentRequestedField,
+    helperInfo,
+    setHelperInfo,
+    resetVisitContext,
+  } = useIntake();
+
+  const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || process.env.EXPO_PUBLIC_API_KEY || '';
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL;
+
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-
-  const [infoModalVisible, setInfoModalVisible] = useState(false);
-  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
-  
-  const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [infoVisible, setInfoVisible] = useState(false);
+  const [activeInfo, setActiveInfo] = useState(DEFAULT_HELPER);
+  const [dockHeight, setDockHeight] = useState(96);
+  const [inputHeight, setInputHeight] = useState(22);
 
-  // --- GEMINI API INTEGRATION ---
-  const sendToAPI = async (userMessage: string) => {
-    setIsLoading(true);
-    
-    const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-    const apiKey = process.env.EXPO_PUBLIC_API_KEY;
+  const listRef = useRef<FlatList<Message>>(null);
+  const inputRef = useRef<TextInput>(null);
+  const initialTurnRequestedRef = useRef(false);
 
-    if (!apiUrl || !apiKey) {
-      console.error("API URL or Key is missing! Check your .env file.");
-      setIsLoading(false);
+  const scrollToLatest = (animated = true) => {
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
+  };
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setTimeout(() => scrollToLatest(true), 90);
+    });
+    return () => showSub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!isAiEnabled) {
+      initialTurnRequestedRef.current = false;
+      setMessages([]);
+      setInputText('');
+      setInputHeight(22);
+      setCurrentRequestedField('Main reason for visit');
+      setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+      resetVisitContext();
       return;
     }
 
-    // 1. System Instructions
-    const systemInstructionText = `You are a Medical Intake Form Helper embedded inside a patient check-in interface.
-
-Your job is to guide a patient through a medical intake conversation in a clear, supportive, and simple way. You are helping build a draft intake form behind the scenes as the patient answers questions.
-
-Important behavior:
-- Ask only 1 main question at a time.
-- Keep the visible chat question short and natural.
-- Do not include long explanations in the main chat response.
-- Do not explain why the question matters unless the interface requests that information separately.
-- Always generate hidden metadata for the interface, including:
-  1. a plain-language definition of any medical term or concept in the question,
-  2. a short explanation of why the question is being asked,
-  3. the fields already collected,
-  4. the fields currently being requested,
-  5. the updated draft intake form.
-- Do not guess missing information.
-- If information is unknown or not provided, mark it as "Unknown" or "Not provided".
-- Do not give diagnoses, treatment plans, or medical advice.
-- Focus on collecting intake information only.
-
-Conversation flow:
-- Start with the reason for the visit.
-- Then ask the most relevant follow-up question for that visit.
-- Gradually collect symptom details, patient information, emergency contact, insurance, medical history, medications, allergies, and other relevant details.
-- Once enough information is collected, switch to review mode and produce a draft form for the patient to review.
-
-Output rules:
-- Return structured JSON only.
-- The field called "display_message" is the only text that should appear directly in the chat bubble.
-- The fields "plain_language_definition" and "why_we_are_asking" are hidden UI support fields and should not be written as part of the main display message.`;
-
-    // 2. Structured JSON Schema
-    const responseSchema = {
-      type: "OBJECT",
-      required: ["mode", "display_message", "plain_language_definition", "why_we_are_asking", "fields_requested_now", "collected_data", "draft_form"],
-      properties: {
-        mode: { 
-          type: "STRING", 
-          enum: ["intake_question", "clarification_needed", "form_review"] 
-        },
-        display_message: { type: "STRING" },
-        plain_language_definition: { type: "STRING" },
-        why_we_are_asking: { type: "STRING" },
-        fields_requested_now: {
-          type: "ARRAY",
-          items: { type: "STRING" }
-        },
-        collected_data: {
-          type: "OBJECT",
-          properties: {
-            patient_information: {
-              type: "OBJECT",
-              properties: {
-                full_name: { type: "STRING" },
-                date_of_birth: { type: "STRING" },
-                phone_number: { type: "STRING" },
-                email: { type: "STRING" },
-                address: { type: "STRING" }
-              }
-            },
-            visit_information: {
-              type: "OBJECT",
-              properties: {
-                reason_for_visit: { type: "STRING" },
-                symptoms: { type: "ARRAY", items: { type: "STRING" } },
-                symptom_duration: { type: "STRING" },
-                pain_severity_1_to_10: { type: "STRING" },
-                additional_notes: { type: "STRING" }
-              }
-            }
-          }
-        },
-        draft_form: {
-          type: "OBJECT",
-          properties: {
-            patient_information: {
-              type: "OBJECT",
-              properties: {
-                full_name: { type: "STRING" },
-                date_of_birth: { type: "STRING" },
-                phone_number: { type: "STRING" },
-                email: { type: "STRING" },
-                address: { type: "STRING" }
-              }
-            },
-            visit_information: {
-              type: "OBJECT",
-              properties: {
-                reason_for_visit: { type: "STRING" },
-                symptoms: { type: "ARRAY", items: { type: "STRING" } },
-                symptom_duration: { type: "STRING" },
-                pain_severity_1_to_10: { type: "STRING" },
-                additional_notes: { type: "STRING" }
-              }
-            },
-            review_notice: { type: "STRING" }
-          }
-        }
-      }
-    };
-
-    try {
-      // 3. The exact Gemini fetch request
-      const response = await fetch(`${apiUrl}?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          systemInstruction: {
-            parts: [{ text: systemInstructionText }]
-          },
-          contents: [{ 
-            role: "user",
-            parts: [{ text: userMessage }] 
-          }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: responseSchema
-          }
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // 4. Extract Gemini's hidden JSON text and parse it
-      const geminiTextResponse = data.candidates[0].content.parts[0].text;
-      const parsedData = JSON.parse(geminiTextResponse);
-
-      const aiReply: Message = {
-        id: Date.now().toString(),
-        text: parsedData.display_message, 
-        sender: 'ai',
-        plainLanguageDefinition: parsedData.plain_language_definition, 
-        whyWeAreAsking: parsedData.why_we_are_asking 
-      };
-
-      setMessages((prev) => [...prev, aiReply]);
-      
-      // Look in your terminal when you send a message to see the form building!
-      console.log("Live Form Data:", parsedData.draft_form);
-
-    } catch (error) {
-      console.error("API Error:", error);
-      const errorReply: Message = {
-        id: Date.now().toString(),
-        text: "Sorry, I'm having trouble connecting to Gemini right now.",
-        sender: 'ai'
-      };
-      setMessages((prev) => [...prev, errorReply]);
-    } finally {
-      setIsLoading(false);
+    if (!hasAcceptedPrivacy) {
+      initialTurnRequestedRef.current = false;
+      setMessages([]);
+      setInputText('');
+      setInputHeight(22);
+      setCurrentRequestedField('Main reason for visit');
+      setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+      resetVisitContext();
     }
-  };
+  }, [hasAcceptedPrivacy, isAiEnabled, resetVisitContext, setCurrentRequestedField, setHelperInfo]);
 
-  // --- SEND MESSAGES ---
-  const sendMessage = async () => {
-    if (inputText.trim().length === 0) return;
-    
-    const currentText = inputText;
-    const newMessage: Message = { id: Date.now().toString(), text: currentText, sender: 'user' };
-    
-    setMessages((prev) => [...prev, newMessage]);
-    setInputText('');
-    
-    await sendToAPI(currentText);
-  };
+  const runAgentTurn = async (conversation: Message[], isInitialTurn: boolean) => {
+    if (!apiKey) {
+      throw new Error('Gemini API key not found. Add EXPO_PUBLIC_GEMINI_API_KEY or EXPO_PUBLIC_API_KEY to your Expo env.');
+    }
 
-  // --- MEDIA HANDLERS ---
-  const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.5,
+    const agent = await requestGeminiAgent({
+      apiKey,
+      apiUrl,
+      profile,
+      draftForm,
+      conversation,
+      isInitialTurn,
     });
 
-    if (!result.canceled) {
-      const imageMessage: Message = { id: Date.now().toString(), text: '', sender: 'user', imageUri: result.assets[0].uri };
-      setMessages(prev => [...prev, imageMessage]);
-      await sendToAPI("[User attached an image]"); 
+    applyAgentDraft({
+      visit_context: agent.visit_context,
+      additional_concerns: agent.additional_concerns,
+    });
+    setCurrentRequestedField(agent.current_focus_label);
+    setHelperInfo(agent.plain_language_definition, agent.why_we_are_asking);
+
+    const aiMessage: Message = {
+      id: makeId('ai'),
+      sender: 'ai',
+      text: agent.display_message,
+      plainLanguageDefinition: agent.plain_language_definition,
+      whyWeAreAsking: agent.why_we_are_asking,
+    };
+
+    setMessages([...conversation, aiMessage]);
+    setTimeout(() => scrollToLatest(true), 120);
+  };
+
+  useEffect(() => {
+    if (!hasAcceptedPrivacy || !isAiEnabled || initialTurnRequestedRef.current) {
+      return;
+    }
+
+    initialTurnRequestedRef.current = true;
+    setIsLoading(true);
+    runAgentTurn([], true)
+      .catch((error) => {
+        setMessages([
+          {
+            id: makeId('ai-error'),
+            sender: 'ai',
+            text: `I couldn't start the assistant right now. ${error instanceof Error ? error.message : 'Please try again.'}`,
+            plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
+            whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
+          },
+        ]);
+      })
+      .finally(() => setIsLoading(false));
+  }, [hasAcceptedPrivacy, isAiEnabled]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => scrollToLatest(false), 60);
+    return () => clearTimeout(timer);
+  }, [messages, dockHeight, isLoading]);
+
+  const startConversation = () => {
+    acceptPrivacy();
+  };
+
+  const openInfoForMessage = (item: Message) => {
+    setActiveInfo({
+      plainLanguageDefinition: item.plainLanguageDefinition || helperInfo.plainLanguageDefinition,
+      whyWeAreAsking: item.whyWeAreAsking || helperInfo.whyWeAreAsking,
+    });
+    setInfoVisible(true);
+  };
+
+  const submitReply = async () => {
+    const userText = inputText.trim();
+    if (!userText || isLoading) return;
+
+    const nextConversation: Message[] = [...messages, { id: makeId('user'), sender: 'user', text: userText }];
+    setMessages(nextConversation);
+    setInputText('');
+    setInputHeight(22);
+    Keyboard.dismiss();
+    inputRef.current?.blur();
+    setIsLoading(true);
+
+    try {
+      await runAgentTurn(nextConversation, false);
+    } catch (error) {
+      setMessages([
+        ...nextConversation,
+        {
+          id: makeId('ai-error'),
+          sender: 'ai',
+          text: `I had trouble updating the visit draft. ${error instanceof Error ? error.message : 'Please try again.'}`,
+          plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
+          whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => scrollToLatest(true), 120);
     }
   };
 
-  const handleMicPress = async () => {
-    if (isRecording) {
-      setIsRecording(false);
-      const audioMessage: Message = { id: Date.now().toString(), text: 'Voice Message (0:04)', sender: 'user', isAudio: true };
-      setMessages(prev => [...prev, audioMessage]);
-      await sendToAPI("[User sent an audio message]"); 
-    } else {
-      setIsRecording(true);
-    }
-  };
+  const renderItem = ({ item }: { item: Message }) => {
+    const isAi = item.sender === 'ai';
 
-  // --- UI HANDLERS ---
-  const handleInfoPress = (message: Message) => {
-    setSelectedMessage(message);
-    setInfoModalVisible(true);
-  };
-
-  const renderMessage = ({ item }: { item: Message }) => {
-    const isAI = item.sender === 'ai';
     return (
-      <View style={[styles.messageRow, isAI ? styles.aiRow : styles.userRow]}>
-        {isAI && <IconSymbol name="brain.head.profile" size={24} color="#808080" style={styles.aiIcon} />}
-
-        <View style={[styles.bubble, isAI ? styles.aiBubble : styles.userBubble]}>
-          {item.imageUri ? (
-            <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
-          ) : 
-          item.isAudio ? (
-            <View style={styles.audioContainer}>
-              <IconSymbol name="play.circle.fill" size={24} color="#007AFF" />
-              <Text style={styles.userText}> {item.text}</Text>
-            </View>
-          ) : 
-          (
-            <Text style={[styles.messageText, isAI ? styles.aiText : styles.userText]}>
-              {item.text}
-            </Text>
-          )}
+      <View style={[styles.messageRow, isAi ? styles.aiRow : styles.userRow]}>
+        {isAi ? (
+          <View style={styles.aiAvatar}>
+            <Ionicons name="sparkles" size={16} color="#E8820C" />
+          </View>
+        ) : null}
+        <View style={styles.messageContent} pointerEvents="box-none">
+          <View pointerEvents="none" style={[styles.bubble, isAi ? styles.aiBubble : styles.userBubble]}>
+            <Text style={[styles.messageText, isAi ? styles.aiText : styles.userText]}>{item.text}</Text>
+          </View>
         </View>
-
-        {isAI && (
-          <TouchableOpacity onPress={() => handleInfoPress(item)} style={styles.infoButton}>
-            <IconSymbol name="info.circle" size={18} color="#4fbdeb" />
+        {isAi ? (
+          <TouchableOpacity style={styles.inlineInfoButton} onPress={() => openInfoForMessage(item)}>
+            <Ionicons name="information-circle-outline" size={26} color="#8A8175" />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     );
   };
 
   return (
-    <ThemedView style={styles.fullScreen}>
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        
-        <TouchableOpacity
-          style={styles.continueButton}
-          onPress={() => router.push('/form')}
-        >
-          <Text style={styles.continueButtonText}>Continue to Form</Text>
-        </TouchableOpacity>
+    <SafeAreaView edges={['top']} style={styles.container}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        <View style={styles.container}>
+          <View style={styles.topCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.topTitle}>AI intake assistant</Text>
+              <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
+            </View>
+            <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
+              <Text style={styles.reviewButtonText}>View intake</Text>
+            </TouchableOpacity>
+          </View>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.container}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        >
           <FlatList
+            ref={listRef}
             data={messages}
-            renderItem={renderMessage}
+            renderItem={renderItem}
             keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.chatList}
-            showsVerticalScrollIndicator={false}
+            style={styles.list}
+            contentContainerStyle={[styles.chatList, { paddingBottom: dockHeight + Math.max(insets.bottom, 12) + 18 }]}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => scrollToLatest(false)}
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>{isAiEnabled ? 'Pre-visit check-in' : 'AI check-in is off'}</Text>
+                <Text style={styles.emptyText}>
+                  {isAiEnabled ? 'Review the privacy note before starting.' : 'AI is off. You can still complete your intake manually.'}
+                </Text>
+                {!isAiEnabled ? (
+                  <TouchableOpacity style={styles.manualButton} onPress={() => router.push('/form')}>
+                    <Text style={styles.manualButtonText}>Open intake review</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            }
           />
 
-          <View style={styles.inputWrapper}>
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={styles.input}
-                placeholder={isRecording ? "Recording audio..." : "Enter Text"}
-                value={inputText}
-                onChangeText={setInputText}
-                placeholderTextColor={isRecording ? "#FF3B30" : "#999"}
-                multiline
-                editable={!isRecording && !isLoading} 
-              />
-              <View style={styles.iconBar}>
-                <View style={styles.leftIcons}>
-                  
-                  <TouchableOpacity onPress={pickImage} disabled={isLoading}>
-                    <IconSymbol name="photo" size={22} color={isLoading ? "#D1D1D6" : "#666"} />
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity onPress={handleMicPress} disabled={isLoading}>
-                    <IconSymbol name="mic" size={22} color={isRecording ? "#FF3B30" : isLoading ? "#D1D1D6" : "#666"} />
-                  </TouchableOpacity>
+          {hasAcceptedPrivacy && isAiEnabled && messages.length > 0 ? (
+            <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 10) }]} onLayout={(e) => setDockHeight(e.nativeEvent.layout.height)}>
+              <View style={styles.helperChip}>
+                <Text style={styles.helperLabel}>Currently asking</Text>
+                <Text style={styles.helperValue} numberOfLines={1}>{currentRequestedField}</Text>
+              </View>
 
-                </View>
-                
-                <TouchableOpacity onPress={sendMessage} style={styles.sendButton} disabled={isRecording || isLoading || inputText.trim().length === 0}>
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color="#007AFF" />
-                  ) : (
-                    <IconSymbol 
-                      name="arrow.up.circle.fill" 
-                      size={32} 
-                      color={inputText.trim().length > 0 && !isRecording ? "#007AFF" : "#D1D1D6"} 
-                    />
-                  )}
+              <View style={styles.inputBar}>
+                <TouchableOpacity style={styles.sideAction} disabled>
+                  <Ionicons name="image-outline" size={22} color="#9E958A" />
                 </TouchableOpacity>
-
+                <TextInput
+                  ref={inputRef}
+                  style={[styles.input, { height: Math.min(Math.max(inputHeight, 22), 68) }]}
+                  placeholder={isLoading ? 'Assistant is thinking…' : 'Type your answer'}
+                  placeholderTextColor="#A59D93"
+                  value={inputText}
+                  onChangeText={setInputText}
+                  editable={!isLoading}
+                  multiline
+                  textAlignVertical="center"
+                  onFocus={() => setTimeout(() => scrollToLatest(true), 140)}
+                  onContentSizeChange={(event) => setInputHeight(event.nativeEvent.contentSize.height)}
+                  blurOnSubmit={false}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity style={styles.sideAction} disabled>
+                  <Ionicons name="mic-outline" size={22} color="#9E958A" />
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.sendButton, !(inputText.trim() && !isLoading) && styles.sendButtonDisabled]} onPress={submitReply} disabled={isLoading || !inputText.trim()}>
+                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
+                </TouchableOpacity>
               </View>
             </View>
+          ) : null}
+        </View>
+      </KeyboardAvoidingView>
+
+      <Modal visible={isAiEnabled && !hasAcceptedPrivacy} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Before you start</Text>
+            <Text style={styles.modalText}>This AI assistant helps organize your pre-visit intake. Personal medical details should remain inside this care experience.</Text>
+            <Text style={styles.modalText}>De-identified conversation data may be reviewed to improve the system, but direct personal identifiers should not be used for model training.</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={startConversation}>
+              <Text style={styles.primaryButtonText}>Continue with AI</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => {
+                disableAi();
+                router.push('/form');
+              }}
+            >
+              <Text style={styles.secondaryButtonText}>Fill out intake manually</Text>
+            </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
-        {/* Dynamic Info Modal */}
-        <Modal animationType="fade" transparent={true} visible={infoModalVisible} onRequestClose={() => setInfoModalVisible(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Question Details</Text>
-
-              <Text style={styles.modalSubtitle}>Plain Language Definition:</Text>
-              <Text style={styles.modalText}>
-                {selectedMessage?.plainLanguageDefinition || "No definition provided."}
-              </Text>
-              
-              <Text style={styles.modalSubtitle}>Why we are asking:</Text>
-              <Text style={styles.modalText}>
-                {selectedMessage?.whyWeAreAsking || "No explanation provided."}
-              </Text>
-
-              <TouchableOpacity
-                style={styles.closeModalButton}
-                onPress={() => setInfoModalVisible(false)}
-              >
-                <Text style={styles.closeModalButtonText}>Got it</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal visible={infoVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.infoModalCard}>
+            <Text style={styles.infoHeading}>What this means</Text>
+            <Text style={styles.infoBody}>{activeInfo.plainLanguageDefinition}</Text>
+            <Text style={[styles.infoHeading, { marginTop: 14 }]}>Why we are asking</Text>
+            <Text style={styles.infoBody}>{activeInfo.whyWeAreAsking}</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setInfoVisible(false)}>
+              <Text style={styles.primaryButtonText}>Got it</Text>
+            </TouchableOpacity>
           </View>
-        </Modal>
-
-      </SafeAreaView>
-    </ThemedView>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  fullScreen: { flex: 1 },
-  container: { flex: 1 },
-  continueButton: { margin: 16, backgroundColor: '#007AFF', padding: 14, borderRadius: 12, alignItems: 'center' },
-  continueButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  chatList: { padding: 16, paddingTop: 10, paddingBottom: 20 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 20, maxWidth: '85%' },
-  aiRow: { alignSelf: 'flex-start' },
-  userRow: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
-  bubble: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
-  aiBubble: { backgroundColor: 'transparent', borderColor: '#444', borderWidth: 1, borderStyle: 'dotted', marginLeft: 8 },
-  userBubble: { backgroundColor: '#FFFFFF', marginRight: 8 },
-  messageImage: { width: 200, height: 150, borderRadius: 12 },
-  audioContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  messageText: { fontSize: 16, lineHeight: 22, fontFamily: Fonts.rounded },
-  aiText: { color: '#FFFFFF' },
-  userText: { color: '#000000', fontWeight: '500' },
-  aiIcon: { marginBottom: 4 },
-  infoButton: { marginLeft: 8, marginBottom: 12, padding: 5 },
-  inputWrapper: { paddingHorizontal: 16, paddingBottom: 20 },
-  inputContainer: { borderRadius: 28, padding: 12, backgroundColor: '#FFFFFF' },
-  input: { fontSize: 16, minHeight: 24, color: '#000', paddingHorizontal: 10 },
-  iconBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
-  leftIcons: { flexDirection: 'row', gap: 16, paddingLeft: 8 },
-  sendButton: { paddingRight: 4, justifyContent: 'center', alignItems: 'center', width: 32, height: 32 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { width: '85%', backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#000', marginBottom: 20, textAlign: 'center' },
-  modalSubtitle: { fontSize: 16, fontWeight: 'bold', color: '#000', marginTop: 10, marginBottom: 5 },
-  modalText: { fontSize: 15, color: '#444', lineHeight: 22, marginBottom: 10 },
-  closeModalButton: { marginTop: 20, backgroundColor: '#007AFF', paddingVertical: 14, borderRadius: 16, alignItems: 'center' },
-  closeModalButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' }
+  container: { flex: 1, backgroundColor: '#F8F5F0' },
+  topCard: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E5DED4',
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  topTitle: { fontSize: 18, fontWeight: '700', color: '#232220', marginBottom: 6 },
+  topSubtitle: { fontSize: 14, lineHeight: 22, color: '#6F6A63' },
+  reviewButton: { backgroundColor: '#F6EAD6', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  reviewButtonText: { color: '#A36A09', fontWeight: '700' },
+  list: { flex: 1 },
+  chatList: { paddingHorizontal: 20, paddingTop: 12, gap: 18 },
+  emptyState: { alignItems: 'center', paddingTop: 100, paddingHorizontal: 24 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2D2C29', marginBottom: 8 },
+  emptyText: { fontSize: 14, lineHeight: 22, color: '#6F6A63', textAlign: 'center', marginBottom: 16 },
+  manualButton: { backgroundColor: '#F6EAD6', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16 },
+  manualButtonText: { color: '#A36A09', fontWeight: '700' },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
+  aiRow: { justifyContent: 'flex-start' },
+  userRow: { justifyContent: 'flex-end' },
+  aiAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F8EDE0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    marginTop: 6,
+  },
+  messageContent: { maxWidth: '74%' },
+  bubble: { borderRadius: 28, paddingHorizontal: 18, paddingVertical: 16 },
+  aiBubble: { backgroundColor: '#FFF5E9', borderWidth: 1, borderColor: '#E6C289' },
+  userBubble: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8E1D7' },
+  messageText: { fontSize: 16, lineHeight: 24 },
+  aiText: { color: '#2C2C2A' },
+  userText: { color: '#2C2C2A' },
+  inlineInfoButton: { marginLeft: 8, alignSelf: 'center' },
+  bottomDock: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    backgroundColor: '#F8F5F0',
+    borderTopWidth: 1,
+    borderTopColor: '#E8E2D8',
+  },
+  helperChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F1ECE3',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 10,
+    maxWidth: '100%',
+  },
+  helperLabel: { fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#968E85', marginBottom: 3 },
+  helperValue: { fontSize: 15, color: '#2D2B28' },
+  inputBar: {
+    minHeight: 64,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#DDD4C8',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 10,
+    paddingRight: 8,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  sideAction: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    color: '#2D2B28',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
+    maxHeight: 68,
+  },
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E88711',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendButtonDisabled: { backgroundColor: '#DAD2C6' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.28)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 22,
+  },
+  infoModalCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 22,
+  },
+  modalTitle: { fontSize: 22, fontWeight: '700', color: '#1F1F1D', marginBottom: 12 },
+  modalText: { fontSize: 15, lineHeight: 22, color: '#5F5A54', marginBottom: 10 },
+  primaryButton: {
+    marginTop: 10,
+    backgroundColor: '#E88711',
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  primaryButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  secondaryButton: {
+    marginTop: 10,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#F6F1E8',
+  },
+  secondaryButtonText: { color: '#7B6E60', fontWeight: '700', fontSize: 15 },
+  infoHeading: { fontSize: 17, fontWeight: '700', color: '#1F1F1D', marginBottom: 8 },
+  infoBody: { fontSize: 15, lineHeight: 22, color: '#5F5A54' },
 });
