@@ -503,6 +503,22 @@ export default function ChatTab() {
             keyboardShouldPersistTaps="handled"
             onContentSizeChange={() => scrollToLatest(false)}
             onScrollBeginDrag={() => Keyboard.dismiss()}
+            ListFooterComponent={
+              isLoading ? (
+                <View style={[styles.messageRow, styles.aiRow]}>
+                  <View style={styles.aiAvatar}>
+                    <Ionicons name="sparkles" size={16} color="#E8820C" />
+                  </View>
+
+                  <View style={styles.messageContent}>
+                    <View style={[styles.bubble, styles.aiBubble, styles.thinkingBubble]}>
+                      <ActivityIndicator size="small" color="#E8820C" />
+                      <Text style={styles.thinkingText}>Assistant is thinking...</Text>
+                    </View>
+                  </View>
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>{isAiEnabled ? 'Pre-visit check-in' : 'AI check-in is off'}</Text>
@@ -740,4 +756,13 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: '#7B6E60', fontWeight: '700', fontSize: 15 },
   infoHeading: { fontSize: 17, fontWeight: '700', color: '#1F1F1D', marginBottom: 8 },
   infoBody: { fontSize: 15, lineHeight: 22, color: '#5F5A54' },
+  thinkingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  thinkingText: {
+    fontSize: 15,
+    color: '#6F6A63',
+  },
 });

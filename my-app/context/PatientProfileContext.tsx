@@ -37,9 +37,9 @@ const DEFAULT_PROFILE: PatientProfile = {
   familyHistory: 'Father: Diabetes; Grandmother: Breast Cancer',
   currentMedications: 'None reported',
   primaryCare: 'Dr. Sarah Chen',
-  upcomingProvider: 'Dr. Sarah Chen',
-  upcomingTime: 'Today · 2:30 PM',
-  upcomingVisitType: 'General Checkup',
+  upcomingProvider: '',
+  upcomingTime: '',
+  upcomingVisitType: '',
 };
 
 type PatientProfileContextValue = {

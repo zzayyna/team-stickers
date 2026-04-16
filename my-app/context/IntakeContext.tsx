@@ -49,6 +49,14 @@ export type IntakeData = {
   };
 };
 
+type SectionMap = {
+  patient_information: IntakeData['patient_information'];
+  insurance_information: IntakeData['insurance_information'];
+  medical_history: IntakeData['medical_history'];
+  visit_context: IntakeData['visit_context'];
+  additional_concerns: IntakeData['additional_concerns'];
+};
+
 type IntakeContextValue = {
   draftForm: IntakeData;
   sectionStatus: Record<'patient_information' | 'insurance' | 'medical_history' | 'visit_details' | 'additional_concerns', SectionStatus>;
@@ -57,6 +65,10 @@ type IntakeContextValue = {
   updateFromProfile: () => void;
   resetVisitContext: () => void;
   applyAgentDraft: (patch: { visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => void;
+  updateSectionField: <S extends keyof SectionMap, F extends keyof SectionMap[S]>(section: S, field: F, value: string) => void;
+  addRelevantField: () => void;
+  removeRelevantField: (index: number) => void;
+  updateRelevantField: (index: number, patch: Partial<RelevantVisitField>) => void;
   setCurrentRequestedField: (field: string) => void;
   setHelperInfo: (plainLanguageDefinition: string, whyWeAreAsking: string) => void;
 };
@@ -205,6 +217,57 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const updateSectionField = useCallback(<S extends keyof SectionMap, F extends keyof SectionMap[S]>(section: S, field: F, value: string) => {
+    setDraftForm((prev) => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [field]: value,
+      },
+    }));
+  }, []);
+
+  const addRelevantField = useCallback(() => {
+    setDraftForm((prev) => ({
+      ...prev,
+      visit_context: {
+        ...prev.visit_context,
+        relevant_fields: [
+          ...prev.visit_context.relevant_fields,
+          {
+            key: `field_${prev.visit_context.relevant_fields.length + 1}`,
+            label: '',
+            value: '',
+            source: 'patient',
+          },
+        ],
+      },
+    }));
+  }, []);
+
+  const removeRelevantField = useCallback((index: number) => {
+    setDraftForm((prev) => ({
+      ...prev,
+      visit_context: {
+        ...prev.visit_context,
+        relevant_fields: prev.visit_context.relevant_fields.filter((_, currentIndex) => currentIndex !== index),
+      },
+    }));
+  }, []);
+
+  const updateRelevantField = useCallback((index: number, patch: Partial<RelevantVisitField>) => {
+    setDraftForm((prev) => ({
+      ...prev,
+      visit_context: {
+        ...prev.visit_context,
+        relevant_fields: prev.visit_context.relevant_fields.map((field, currentIndex) => {
+          if (currentIndex !== index) return field;
+          return normalizeField({ ...field, ...patch }, index);
+        }),
+      },
+    }));
+  }, []);
+
   const setHelperInfo = useCallback((plainLanguageDefinition: string, whyWeAreAsking: string) => {
     setHelperInfoState({ plainLanguageDefinition, whyWeAreAsking });
   }, []);
@@ -233,10 +296,14 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
       updateFromProfile,
       resetVisitContext,
       applyAgentDraft,
+      updateSectionField,
+      addRelevantField,
+      removeRelevantField,
+      updateRelevantField,
       setCurrentRequestedField,
       setHelperInfo,
     }),
-    [draftForm, sectionStatus, currentRequestedField, helperInfo, updateFromProfile, resetVisitContext, applyAgentDraft, setHelperInfo]
+    [draftForm, sectionStatus, currentRequestedField, helperInfo, updateFromProfile, resetVisitContext, applyAgentDraft, updateSectionField, addRelevantField, removeRelevantField, updateRelevantField, setHelperInfo]
   );
 
   return <IntakeContext.Provider value={value}>{children}</IntakeContext.Provider>;

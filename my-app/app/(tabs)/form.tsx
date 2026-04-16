@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useIntake, type RelevantVisitField, type SectionStatus } from '../../context/IntakeContext';
 import { usePatientProfile } from '../../context/PatientProfileContext';
+import { useAiAssistant } from '../../context/AiAssistantContext';
+import { supabase } from '../../lib/supabase';
 
 const statusMap: Record<SectionStatus, { label: string; tone: string; bg: string; border: string }> = {
   not_started: { label: 'Not started', tone: '#8D857B', bg: '#F6F1E8', border: '#E5DED4' },
@@ -23,8 +25,46 @@ function DetailLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function VisitFieldLine({ field }: { field: RelevantVisitField }) {
-  return <DetailLine label={field.label} value={field.value} />;
+function EditableField({ label, value, multiline = false, onChangeText }: { label: string; value: string; multiline?: boolean; onChangeText: (value: string) => void }) {
+  return (
+    <View style={styles.editFieldWrap}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <TextInput
+        style={[styles.editInput, multiline && styles.editInputMultiline]}
+        value={value}
+        onChangeText={onChangeText}
+        multiline={multiline}
+        textAlignVertical={multiline ? 'top' : 'center'}
+        placeholder={`Enter ${label.toLowerCase()}`}
+        placeholderTextColor="#9D948A"
+      />
+    </View>
+  );
+}
+
+function RelevantVisitFieldEditor({
+  field,
+  index,
+  onChange,
+  onRemove,
+}: {
+  field: RelevantVisitField;
+  index: number;
+  onChange: (index: number, patch: Partial<RelevantVisitField>) => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <View style={styles.dynamicFieldCard}>
+      <View style={styles.dynamicFieldHeader}>
+        <Text style={styles.dynamicFieldTitle}>Visit detail {index + 1}</Text>
+        <TouchableOpacity onPress={() => onRemove(index)}>
+          <Ionicons name="trash-outline" size={18} color="#A44F56" />
+        </TouchableOpacity>
+      </View>
+      <EditableField label="Label" value={field.label} onChangeText={(value) => onChange(index, { label: value, key: value.toLowerCase().replace(/\s+/g, '_') })} />
+      <EditableField label="Value" value={field.value} multiline onChangeText={(value) => onChange(index, { value })} />
+    </View>
+  );
 }
 
 function SectionCard({
@@ -48,7 +88,7 @@ function SectionCard({
 }) {
   const meta = statusMap[status];
   return (
-    <TouchableOpacity activeOpacity={0.9} onPress={onPress} style={[styles.sectionCard, { borderColor: meta.border, backgroundColor: status === 'review_needed' ? '#F7FCF8' : '#FFFFFF' }]}>
+    <TouchableOpacity activeOpacity={0.94} onPress={onPress} style={[styles.sectionCard, { borderColor: meta.border, backgroundColor: status === 'review_needed' ? '#F7FCF8' : '#FFFFFF' }]}>
       <View style={styles.sectionTop}>
         <View style={styles.iconBox}><Ionicons name={icon} size={28} color="#3F6F93" /></View>
         <View style={{ flex: 1 }}>
@@ -68,28 +108,92 @@ function SectionCard({
 
 function formatVisitCategory(value: string) {
   if (!value.trim()) return 'Not assigned yet';
-  return value
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (match) => match.toUpperCase());
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 export default function IntakeReview() {
   const { profile } = usePatientProfile();
-  const { draftForm, sectionStatus } = useIntake();
+  const { isAiEnabled } = useAiAssistant();
+  const {
+    draftForm,
+    sectionStatus,
+    updateSectionField,
+    addRelevantField,
+    removeRelevantField,
+    updateRelevantField,
+  } = useIntake();
+
   const [expandedSection, setExpandedSection] = useState<SectionKey | null>('visit_details');
+  const [saving, setSaving] = useState(false);
+  const [currentFormId, setCurrentFormId] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [editingEnabled, setEditingEnabled] = useState(!isAiEnabled);
 
   const completedCount = Object.values(sectionStatus).filter((status) => status !== 'not_started').length;
   const headerTitle = `${profile.firstName} ${profile.lastName}`;
-  const headerSubtitle = `${profile.upcomingProvider} · ${profile.upcomingTime} · ${profile.upcomingVisitType}`;
+  const headerSubtitle = profile.upcomingProvider && profile.upcomingTime && profile.upcomingVisitType
+    ? `${profile.upcomingProvider} · ${profile.upcomingTime} · ${profile.upcomingVisitType}`
+    : 'No appointment scheduled yet';
+
   const visitDetailText = useMemo(() => {
-    if (!draftForm.visit_context.chief_concern) return 'Start chat to build a visit-specific section for this appointment.';
-    return draftForm.visit_context.source_note || 'AI tailored these details to your current visit.';
+    if (!draftForm.visit_context.chief_concern) return 'Start chat or type in your visit details manually for this appointment.';
+    return draftForm.visit_context.source_note || 'These visit details reflect the current appointment.';
   }, [draftForm.visit_context]);
 
-  const visitSectionTitle = draftForm.visit_context.section_title.trim() || 'Generated visit summary';
-  const visitSectionSubtitle = draftForm.visit_context.section_subtitle.trim() || 'Created dynamically from your conversation for this appointment';
+  const visitSectionTitle = draftForm.visit_context.section_title.trim() || 'Visit details';
+  const visitSectionSubtitle = draftForm.visit_context.section_subtitle.trim() || 'Dynamic section tailored to the reason for this visit';
 
   const toggle = (key: SectionKey) => setExpandedSection((prev) => (prev === key ? null : key));
+
+  const saveFormToDatabase = async () => {
+    try {
+      setSaving(true);
+      setSaveSuccess(false);
+
+      const { data: authData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error getting user:', userError);
+        return;
+      }
+
+      const user = authData.user;
+      if (!user) {
+        console.error('No authenticated user found');
+        return;
+      }
+
+      const payload = {
+        user_id: user.id,
+        patient_information: draftForm.patient_information,
+        insurance_information: draftForm.insurance_information,
+        medical_history: draftForm.medical_history,
+        visit_context: draftForm.visit_context,
+        additional_concerns: draftForm.additional_concerns,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (currentFormId) {
+        const { error } = await supabase.from('intake_forms').update(payload).eq('id', currentFormId);
+        if (error) {
+          console.error('Error updating form:', error);
+          return;
+        }
+      } else {
+        const { data, error } = await supabase.from('intake_forms').insert(payload).select('id').single();
+        if (error) {
+          console.error('Error creating form:', error);
+          return;
+        }
+        setCurrentFormId(data.id);
+      }
+
+      setSaveSuccess(true);
+    } catch (err) {
+      console.error('Unexpected form save error:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -100,7 +204,19 @@ export default function IntakeReview() {
           {[0, 1, 2, 3, 4].map((i) => <View key={i} style={[styles.progressBar, i < completedCount ? styles.progressBarActive : null]} />)}
         </View>
         <Text style={styles.progressText}>Intake sections {completedCount}/5</Text>
-        <Text style={styles.heroBody}>Saved profile information fills the background sections. The AI generates one visit-specific section from the conversation instead of forcing every appointment into the same form.</Text>
+        <Text style={styles.heroBody}>
+          Saved profile information fills the background sections. Visit-specific details can come from the AI conversation or be entered manually when the patient skips AI.
+        </Text>
+
+        <View style={styles.heroActionRow}>
+          <TouchableOpacity style={[styles.heroAction, styles.secondaryAction]} onPress={() => setEditingEnabled((prev) => !prev)}>
+            <Text style={styles.secondaryActionText}>{editingEnabled ? 'View only' : 'Edit intake'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.heroAction} onPress={saveFormToDatabase} disabled={saving}>
+            <Text style={styles.heroActionText}>{saving ? 'Saving...' : 'Save intake'}</Text>
+          </TouchableOpacity>
+        </View>
+        {saveSuccess ? <Text style={styles.saveSuccess}>Saved successfully.</Text> : null}
       </View>
 
       <SectionCard
@@ -112,11 +228,23 @@ export default function IntakeReview() {
         expanded={expandedSection === 'patient_information'}
         onPress={() => toggle('patient_information')}
       >
-        <DetailLine label="Full name" value={draftForm.patient_information.full_name} />
-        <DetailLine label="Date of birth" value={draftForm.patient_information.date_of_birth} />
-        <DetailLine label="Phone" value={draftForm.patient_information.phone_number} />
-        <DetailLine label="Email" value={draftForm.patient_information.email} />
-        <DetailLine label="Address" value={draftForm.patient_information.address} />
+        {editingEnabled ? (
+          <>
+            <EditableField label="Full name" value={draftForm.patient_information.full_name} onChangeText={(value) => updateSectionField('patient_information', 'full_name', value)} />
+            <EditableField label="Date of birth" value={draftForm.patient_information.date_of_birth} onChangeText={(value) => updateSectionField('patient_information', 'date_of_birth', value)} />
+            <EditableField label="Phone" value={draftForm.patient_information.phone_number} onChangeText={(value) => updateSectionField('patient_information', 'phone_number', value)} />
+            <EditableField label="Email" value={draftForm.patient_information.email} onChangeText={(value) => updateSectionField('patient_information', 'email', value)} />
+            <EditableField label="Address" value={draftForm.patient_information.address} multiline onChangeText={(value) => updateSectionField('patient_information', 'address', value)} />
+          </>
+        ) : (
+          <>
+            <DetailLine label="Full name" value={draftForm.patient_information.full_name} />
+            <DetailLine label="Date of birth" value={draftForm.patient_information.date_of_birth} />
+            <DetailLine label="Phone" value={draftForm.patient_information.phone_number} />
+            <DetailLine label="Email" value={draftForm.patient_information.email} />
+            <DetailLine label="Address" value={draftForm.patient_information.address} />
+          </>
+        )}
       </SectionCard>
 
       <SectionCard
@@ -128,9 +256,19 @@ export default function IntakeReview() {
         expanded={expandedSection === 'insurance'}
         onPress={() => toggle('insurance')}
       >
-        <DetailLine label="Provider" value={draftForm.insurance_information.provider_name} />
-        <DetailLine label="Member ID" value={draftForm.insurance_information.member_id} />
-        <DetailLine label="Group number" value={draftForm.insurance_information.group_number} />
+        {editingEnabled ? (
+          <>
+            <EditableField label="Provider" value={draftForm.insurance_information.provider_name} onChangeText={(value) => updateSectionField('insurance_information', 'provider_name', value)} />
+            <EditableField label="Member ID" value={draftForm.insurance_information.member_id} onChangeText={(value) => updateSectionField('insurance_information', 'member_id', value)} />
+            <EditableField label="Group number" value={draftForm.insurance_information.group_number} onChangeText={(value) => updateSectionField('insurance_information', 'group_number', value)} />
+          </>
+        ) : (
+          <>
+            <DetailLine label="Provider" value={draftForm.insurance_information.provider_name} />
+            <DetailLine label="Member ID" value={draftForm.insurance_information.member_id} />
+            <DetailLine label="Group number" value={draftForm.insurance_information.group_number} />
+          </>
+        )}
       </SectionCard>
 
       <SectionCard
@@ -142,10 +280,21 @@ export default function IntakeReview() {
         expanded={expandedSection === 'medical_history'}
         onPress={() => toggle('medical_history')}
       >
-        <DetailLine label="Allergies" value={draftForm.medical_history.allergies} />
-        <DetailLine label="Current medications" value={draftForm.medical_history.current_medications} />
-        <DetailLine label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} />
-        <DetailLine label="Family history" value={draftForm.medical_history.family_history} />
+        {editingEnabled ? (
+          <>
+            <EditableField label="Allergies" value={draftForm.medical_history.allergies} multiline onChangeText={(value) => updateSectionField('medical_history', 'allergies', value)} />
+            <EditableField label="Current medications" value={draftForm.medical_history.current_medications} multiline onChangeText={(value) => updateSectionField('medical_history', 'current_medications', value)} />
+            <EditableField label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} multiline onChangeText={(value) => updateSectionField('medical_history', 'past_surgeries_or_hospitalizations', value)} />
+            <EditableField label="Family history" value={draftForm.medical_history.family_history} multiline onChangeText={(value) => updateSectionField('medical_history', 'family_history', value)} />
+          </>
+        ) : (
+          <>
+            <DetailLine label="Allergies" value={draftForm.medical_history.allergies} />
+            <DetailLine label="Current medications" value={draftForm.medical_history.current_medications} />
+            <DetailLine label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} />
+            <DetailLine label="Family history" value={draftForm.medical_history.family_history} />
+          </>
+        )}
       </SectionCard>
 
       <SectionCard
@@ -157,26 +306,66 @@ export default function IntakeReview() {
         expanded={expandedSection === 'visit_details'}
         onPress={() => toggle('visit_details')}
       >
-        {draftForm.visit_context.summary_for_clinician ? <DetailLine label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} /> : null}
-        {draftForm.visit_context.relevant_fields.length > 0 ? draftForm.visit_context.relevant_fields.map((field) => (
-          <VisitFieldLine key={field.key} field={field} />
-        )) : <DetailLine label="Generated section" value="The assistant has not generated a visit-specific section yet." />}
-        {draftForm.visit_context.visit_category ? <DetailLine label="Visit category" value={formatVisitCategory(draftForm.visit_context.visit_category)} /> : null}
-        {draftForm.visit_context.chief_concern ? <DetailLine label="Chief concern" value={draftForm.visit_context.chief_concern} /> : null}
-        <DetailLine label="Draft source" value={draftForm.visit_context.source_note || ''} />
+        {editingEnabled ? (
+          <>
+            <EditableField label="Section title" value={draftForm.visit_context.section_title} onChangeText={(value) => updateSectionField('visit_context', 'section_title', value)} />
+            <EditableField label="Section subtitle" value={draftForm.visit_context.section_subtitle} onChangeText={(value) => updateSectionField('visit_context', 'section_subtitle', value)} />
+            <EditableField label="Visit category" value={draftForm.visit_context.visit_category} onChangeText={(value) => updateSectionField('visit_context', 'visit_category', value)} />
+            <EditableField label="Chief concern" value={draftForm.visit_context.chief_concern} multiline onChangeText={(value) => updateSectionField('visit_context', 'chief_concern', value)} />
+            <EditableField label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} multiline onChangeText={(value) => updateSectionField('visit_context', 'summary_for_clinician', value)} />
+
+            <View style={styles.dynamicHeaderRow}>
+              <Text style={styles.dynamicHeaderText}>Visit detail fields</Text>
+              <TouchableOpacity style={styles.addFieldButton} onPress={addRelevantField}>
+                <Ionicons name="add" size={16} color="#A36A09" />
+                <Text style={styles.addFieldText}>Add field</Text>
+              </TouchableOpacity>
+            </View>
+
+            {draftForm.visit_context.relevant_fields.length === 0 ? (
+              <Text style={styles.emptyDynamicText}>No dynamic visit fields yet. Add details like symptom duration, pain location, or triggers.</Text>
+            ) : draftForm.visit_context.relevant_fields.map((field, index) => (
+              <RelevantVisitFieldEditor
+                key={`${field.key}_${index}`}
+                field={field}
+                index={index}
+                onChange={updateRelevantField}
+                onRemove={removeRelevantField}
+              />
+            ))}
+          </>
+        ) : (
+          <>
+            <DetailLine label="Visit category" value={formatVisitCategory(draftForm.visit_context.visit_category)} />
+            <DetailLine label="Chief concern" value={draftForm.visit_context.chief_concern} />
+            {draftForm.visit_context.summary_for_clinician ? <DetailLine label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} /> : null}
+            {draftForm.visit_context.relevant_fields.map((field) => (
+              <DetailLine key={field.key} label={field.label} value={field.value} />
+            ))}
+          </>
+        )}
       </SectionCard>
 
       <SectionCard
-        icon="chatbubble-ellipses-outline"
-        title="Additional Concerns"
-        subtitle="Anything else you would like to add?"
-        detail={draftForm.additional_concerns.patient_notes || draftForm.additional_concerns.ai_drafted_notes || 'This section has not been filled out yet.'}
+        icon="document-text-outline"
+        title="Additional concerns"
+        subtitle="Freeform notes from patient or assistant"
+        detail={draftForm.additional_concerns.ai_drafted_notes ? 'Assistant and patient notes are available.' : 'Add any extra context that did not fit the main visit section.'}
         status={sectionStatus.additional_concerns}
         expanded={expandedSection === 'additional_concerns'}
         onPress={() => toggle('additional_concerns')}
       >
-        <DetailLine label="Patient notes" value={draftForm.additional_concerns.patient_notes} />
-        <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
+        {editingEnabled ? (
+          <>
+            <EditableField label="Patient notes" value={draftForm.additional_concerns.patient_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'patient_notes', value)} />
+            <EditableField label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'ai_drafted_notes', value)} />
+          </>
+        ) : (
+          <>
+            <DetailLine label="Patient notes" value={draftForm.additional_concerns.patient_notes} />
+            <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
+          </>
+        )}
       </SectionCard>
     </ScrollView>
   );
@@ -184,26 +373,43 @@ export default function IntakeReview() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F5F0' },
-  content: { padding: 20, paddingTop: 52, paddingBottom: 36, gap: 14 },
-  heroCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 22, borderWidth: 1, borderColor: '#E5DED4', marginBottom: 8 },
-  heroTitle: { fontSize: 22, fontWeight: '700', color: '#355A82', marginBottom: 6 },
-  heroSubtitle: { fontSize: 14, color: '#6F6A63', marginBottom: 18 },
-  progressRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  progressBar: { height: 10, flex: 1, backgroundColor: '#D5DBE4', borderRadius: 999 },
-  progressBarActive: { backgroundColor: '#6B9BC8' },
-  progressText: { fontSize: 16, fontWeight: '600', color: '#2C2C2A', marginBottom: 10 },
-  heroBody: { fontSize: 14, lineHeight: 21, color: '#6F6A63' },
-  sectionCard: { borderRadius: 24, padding: 18, borderWidth: 1.5 },
-  sectionTop: { flexDirection: 'row', gap: 16, alignItems: 'center' },
-  iconBox: { width: 58, height: 58, borderRadius: 16, backgroundColor: '#EEF3F8', alignItems: 'center', justifyContent: 'center' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 },
-  sectionTitle: { fontSize: 21, fontWeight: '700', color: '#171717' },
-  badge: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
-  badgeText: { fontSize: 13, fontWeight: '700' },
-  sectionSubtitle: { fontSize: 14, color: '#44413D', marginBottom: 6 },
-  sectionDetail: { fontSize: 13, lineHeight: 18 },
-  expandedArea: { marginTop: 16, borderTopWidth: 1, borderTopColor: '#ECE3D7', paddingTop: 12, gap: 10 },
-  detailLine: { gap: 4 },
-  detailLabel: { fontSize: 12, color: '#8E857A', textTransform: 'uppercase', letterSpacing: 0.9 },
-  detailValue: { fontSize: 15, color: '#2B2926', lineHeight: 21 },
+  content: { padding: 20, paddingBottom: 36 },
+  heroCard: { backgroundColor: '#FFFFFF', borderRadius: 24, borderWidth: 1, borderColor: '#E5DED4', padding: 20, marginBottom: 18 },
+  heroTitle: { fontSize: 26, fontWeight: '700', color: '#2C2C2A', marginBottom: 4 },
+  heroSubtitle: { fontSize: 14, color: '#6F6A63', marginBottom: 14 },
+  progressRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  progressBar: { flex: 1, height: 8, borderRadius: 999, backgroundColor: '#E9E2D8' },
+  progressBarActive: { backgroundColor: '#E8820C' },
+  progressText: { fontSize: 13, color: '#6F6A63', marginBottom: 12 },
+  heroBody: { fontSize: 14, lineHeight: 21, color: '#5E5A54' },
+  heroActionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  heroAction: { flex: 1, backgroundColor: '#E8820C', borderRadius: 14, paddingVertical: 13, alignItems: 'center' },
+  heroActionText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  secondaryAction: { backgroundColor: '#F6F1E8' },
+  secondaryActionText: { color: '#6F6A63', fontWeight: '700', fontSize: 15 },
+  saveSuccess: { marginTop: 10, color: '#2F8A57', fontWeight: '600' },
+  sectionCard: { borderWidth: 1, borderRadius: 22, padding: 16, marginBottom: 14 },
+  sectionTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  iconBox: { width: 48, height: 48, borderRadius: 14, backgroundColor: '#EFF5FB', alignItems: 'center', justifyContent: 'center' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#2C2C2A', flex: 1 },
+  sectionSubtitle: { fontSize: 14, color: '#6F6A63', marginBottom: 4 },
+  sectionDetail: { fontSize: 13, lineHeight: 19 },
+  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  badgeText: { fontSize: 11, fontWeight: '700' },
+  expandedArea: { marginTop: 14, borderTopWidth: 1, borderTopColor: '#EEE7DC', paddingTop: 14, gap: 10 },
+  detailLine: { marginBottom: 10 },
+  detailLabel: { fontSize: 12, color: '#8B8379', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
+  detailValue: { fontSize: 15, lineHeight: 21, color: '#2C2C2A' },
+  editFieldWrap: { marginBottom: 12 },
+  editInput: { borderWidth: 1, borderColor: '#E1D9CD', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFDF9', color: '#2C2C2A', fontSize: 15 },
+  editInputMultiline: { minHeight: 88 },
+  dynamicHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, marginBottom: 4 },
+  dynamicHeaderText: { fontSize: 15, fontWeight: '700', color: '#2C2C2A' },
+  addFieldButton: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F6EAD6', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999 },
+  addFieldText: { color: '#A36A09', fontWeight: '700', fontSize: 13 },
+  emptyDynamicText: { fontSize: 13, color: '#7B756D', lineHeight: 19 },
+  dynamicFieldCard: { borderWidth: 1, borderColor: '#E8E0D4', borderRadius: 16, padding: 12, backgroundColor: '#FFFEFC' },
+  dynamicFieldHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  dynamicFieldTitle: { fontSize: 14, fontWeight: '700', color: '#2C2C2A' },
 });

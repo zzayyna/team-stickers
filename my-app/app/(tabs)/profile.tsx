@@ -1,35 +1,28 @@
-import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { usePatientProfile, type PatientProfile } from '../../context/PatientProfileContext';
-import { useIntake } from '../../context/IntakeContext';
+import { Ionicons } from '@expo/vector-icons'
+import { router } from 'expo-router'
+import { useEffect, useState } from 'react'
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { usePatientProfile, type PatientProfile } from '../../context/PatientProfileContext'
+import { useIntake } from '../../context/IntakeContext'
+import { supabase } from '../../lib/supabase'
 
-export default function Profile() {
-  const { profile, updateProfile } = usePatientProfile();
-  const { updateFromProfile } = useIntake();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<PatientProfile>(profile);
-
-  const startEdit = () => {
-    setDraft(profile);
-    setEditing(true);
-  };
-
-  const save = () => {
-    updateProfile(draft);
-    updateFromProfile();
-    setEditing(false);
-  };
-
-  const cancel = () => {
-    setDraft(profile);
-    setEditing(false);
-  };
-
-  const set = (key: keyof PatientProfile) => (value: string) => setDraft((prev) => ({ ...prev, [key]: value }));
-
-  const Section = ({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) => (
+function Section({
+  title,
+  note,
+  children,
+}: {
+  title: string
+  note?: string
+  children: React.ReactNode
+}) {
+  return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>{title}</Text>
@@ -37,27 +30,213 @@ export default function Profile() {
       </View>
       {children}
     </View>
-  );
+  )
+}
 
-  const Field = ({ label, field }: { label: string; field: keyof PatientProfile }) => (
+function Field({
+  label,
+  field,
+  editing,
+  draft,
+  profile,
+  onChange,
+}: {
+  label: string
+  field: keyof PatientProfile
+  editing: boolean
+  draft: PatientProfile
+  profile: PatientProfile
+  onChange: (key: keyof PatientProfile, value: string) => void
+}) {
+  return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       {editing ? (
-        <TextInput style={styles.fieldInput} value={draft[field]} onChangeText={set(field)} />
+        <TextInput
+          style={styles.fieldInput}
+          value={draft[field]}
+          onChangeText={(value) => onChange(field, value)}
+          autoCorrect={false}
+          blurOnSubmit={false}
+        />
       ) : (
         <Text style={styles.fieldValue}>{profile[field]}</Text>
       )}
     </View>
-  );
+  )
+}
+
+export default function Profile() {
+  const { profile, updateProfile } = usePatientProfile()
+  const { updateFromProfile } = useIntake()
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [draft, setDraft] = useState<PatientProfile>(profile)
+  const [loadingProfile, setLoadingProfile] = useState(true)
+
+  useEffect(() => {
+    loadProfileFromDatabase()
+  }, [])
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(profile)
+    }
+  }, [profile, editing])
+
+  const loadProfileFromDatabase = async () => {
+    try {
+      setLoadingProfile(true)
+
+      const { data: authData, error: userError } = await supabase.auth.getUser()
+      if (userError) {
+        console.error('Error getting user:', userError)
+        return
+      }
+
+      const user = authData.user
+      if (!user) {
+        console.error('No authenticated user found')
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (error) {
+        console.error('Error loading profile:', error)
+        return
+      }
+
+      if (!data) return
+
+      const dbProfile: PatientProfile = {
+        firstName: data.first_name ?? '',
+        middleInitial: data.middle_initial ?? '',
+        lastName: data.last_name ?? '',
+        dob: data.dob ?? '',
+        phone: data.phone ?? '',
+        email: data.email ?? '',
+        address: data.address ?? '',
+        insuranceProvider: data.insurance_provider ?? '',
+        insuranceMember: data.insurance_member ?? '',
+        insuranceGroup: data.insurance_group ?? '',
+        allergies: data.allergies ?? '',
+        currentMedications: data.current_medications ?? '',
+        hospitalizations: data.hospitalizations ?? '',
+        familyHistory: data.family_history ?? '',
+        primaryCare: data.primary_care ?? '',
+        upcomingProvider: data.upcoming_provider ?? '',
+        upcomingTime: data.upcoming_time ?? '',
+        upcomingVisitType: data.upcoming_visit_type ?? '',
+      }
+
+      updateProfile(dbProfile)
+      setDraft(dbProfile)
+      updateFromProfile()
+    } catch (err) {
+      console.error('Unexpected load error:', err)
+    } finally {
+      setLoadingProfile(false)
+    }
+  }
+
+  const startEdit = () => {
+    setDraft(profile)
+    setEditing(true)
+  }
+
+  const cancel = () => {
+    setDraft(profile)
+    setEditing(false)
+  }
+
+  const setField = (key: keyof PatientProfile, value: string) => {
+    setDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const save = async () => {
+    try {
+      setSaving(true)
+
+      const { data: authData, error: userError } = await supabase.auth.getUser()
+      if (userError) {
+        console.error('Error getting user:', userError)
+        return
+      }
+
+      const user = authData.user
+      if (!user) {
+        console.error('No authenticated user found')
+        return
+      }
+
+      const { error } = await supabase.from('profiles').upsert({
+        id: user.id,
+        first_name: draft.firstName,
+        middle_initial: draft.middleInitial,
+        last_name: draft.lastName,
+        dob: draft.dob,
+        phone: draft.phone,
+        email: draft.email,
+        address: draft.address,
+        insurance_provider: draft.insuranceProvider,
+        insurance_member: draft.insuranceMember,
+        insurance_group: draft.insuranceGroup,
+        allergies: draft.allergies,
+        current_medications: draft.currentMedications,
+        hospitalizations: draft.hospitalizations,
+        family_history: draft.familyHistory,
+        primary_care: draft.primaryCare,
+        upcoming_provider: draft.upcomingProvider,
+        upcoming_time: draft.upcomingTime,
+        upcoming_visit_type: draft.upcomingVisitType,
+        updated_at: new Date().toISOString(),
+      })
+
+      if (error) {
+        console.error('Supabase save error:', error)
+        return
+      }
+
+      updateProfile(draft)
+      updateFromProfile()
+      setEditing(false)
+    } catch (err) {
+      console.error('Unexpected save error:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loadingProfile) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text>Loading profile...</Text>
+      </View>
+    )
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{profile.firstName[0]}{profile.lastName[0]}</Text></View>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {profile.firstName[0]}
+            {profile.lastName[0]}
+          </Text>
+        </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{profile.firstName} {profile.lastName}</Text>
+          <Text style={styles.name}>
+            {profile.firstName} {profile.lastName}
+          </Text>
           <Text style={styles.email}>{profile.email}</Text>
-          <Text style={styles.syncNote}>Saved information here autofills your next check-in.</Text>
+          <Text style={styles.syncNote}>
+            Saved information here autofills your next check-in.
+          </Text>
         </View>
       </View>
 
@@ -69,48 +248,58 @@ export default function Profile() {
           </TouchableOpacity>
         ) : (
           <>
-            <TouchableOpacity onPress={cancel} style={styles.cancelBtn}><Text style={styles.cancelBtnText}>Cancel</Text></TouchableOpacity>
-            <TouchableOpacity onPress={save} style={styles.saveBtn}><Text style={styles.saveBtnText}>Save changes</Text></TouchableOpacity>
+            <TouchableOpacity onPress={cancel} style={styles.cancelBtn} disabled={saving}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={save} style={styles.saveBtn} disabled={saving}>
+              <Text style={styles.saveBtnText}>
+                {saving ? 'Saving...' : 'Save changes'}
+              </Text>
+            </TouchableOpacity>
           </>
         )}
       </View>
 
       <Section title="Patient information" note="Used to prefill identity and contact fields in check-in.">
-        <Field label="First name" field="firstName" />
-        <Field label="Middle initial" field="middleInitial" />
-        <Field label="Last name" field="lastName" />
-        <Field label="Date of birth" field="dob" />
-        <Field label="Phone" field="phone" />
-        <Field label="Email" field="email" />
-        <Field label="Address" field="address" />
+        <Field label="First name" field="firstName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Middle initial" field="middleInitial" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Last name" field="lastName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Date of birth" field="dob" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Phone" field="phone" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Email" field="email" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Address" field="address" editing={editing} draft={draft} profile={profile} onChange={setField} />
       </Section>
 
       <Section title="Insurance" note="Shown as autofilled from previous data during intake review.">
-        <Field label="Provider" field="insuranceProvider" />
-        <Field label="Member ID" field="insuranceMember" />
-        <Field label="Group number" field="insuranceGroup" />
+        <Field label="Provider" field="insuranceProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Member ID" field="insuranceMember" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Group number" field="insuranceGroup" editing={editing} draft={draft} profile={profile} onChange={setField} />
       </Section>
 
       <Section title="Medical history" note="Used to prefill allergies, medications, and history for review.">
-        <Field label="Known allergies" field="allergies" />
-        <Field label="Current medications" field="currentMedications" />
-        <Field label="Recent hospitalizations" field="hospitalizations" />
-        <Field label="Family history" field="familyHistory" />
-        <Field label="Primary care provider" field="primaryCare" />
+        <Field label="Known allergies" field="allergies" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Current medications" field="currentMedications" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Recent hospitalizations" field="hospitalizations" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Family history" field="familyHistory" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Primary care provider" field="primaryCare" editing={editing} draft={draft} profile={profile} onChange={setField} />
       </Section>
 
       <Section title="Upcoming visit">
-        <Field label="Provider" field="upcomingProvider" />
-        <Field label="Time" field="upcomingTime" />
-        <Field label="Visit type" field="upcomingVisitType" />
+        <Field label="Provider" field="upcomingProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Time" field="upcomingTime" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        <Field label="Visit type" field="upcomingVisitType" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        {!editing && !profile.upcomingProvider ? <Text style={styles.fieldValue}>No upcoming appointment scheduled.</Text> : null}
       </Section>
 
-      <TouchableOpacity style={styles.signOutButton} onPress={() => router.replace('/(auth)/login')}>
+      <TouchableOpacity style={styles.signOutButton} onPress={ async () => { 
+          await supabase.auth.signOut(); 
+          router.replace('/(auth)/login')
+        }}>
         <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
         <Text style={styles.signOutText}>Sign out</Text>
       </TouchableOpacity>
     </ScrollView>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -139,4 +328,4 @@ const styles = StyleSheet.create({
   fieldInput: { fontSize: 15, color: '#2C2C2A', borderWidth: 1, borderColor: '#E5DED4', borderRadius: 10, padding: 10, backgroundColor: '#FFFDF9' },
   signOutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FCEBEB', borderRadius: 12, padding: 14, marginTop: 8 },
   signOutText: { color: '#A32D2D', fontWeight: '600', fontSize: 14 },
-});
+})
