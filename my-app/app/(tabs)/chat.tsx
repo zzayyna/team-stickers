@@ -27,12 +27,35 @@ type Message = {
   whyWeAreAsking?: string;
 };
 
+type AgentSection = 'visit_context' | 'patient_information' | 'insurance_information' | 'medical_history';
+
 type AgentResponse = {
   mode: 'intake_question' | 'clarification_needed' | 'form_review';
   display_message: string;
   plain_language_definition: string;
   why_we_are_asking: string;
   current_focus_label: string;
+  patient_information?: {
+    full_name?: string;
+    date_of_birth?: string;
+    phone_number?: string;
+    email?: string;
+    address?: string;
+    source_note?: string;
+  };
+  insurance_information?: {
+    provider_name?: string;
+    member_id?: string;
+    group_number?: string;
+    source_note?: string;
+  };
+  medical_history?: {
+    allergies?: string;
+    current_medications?: string;
+    past_surgeries_or_hospitalizations?: string;
+    family_history?: string;
+    source_note?: string;
+  };
   visit_context: {
     section_title: string;
     section_subtitle: string;
@@ -57,47 +80,44 @@ const DEFAULT_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models
 
 const SYSTEM_INSTRUCTION = `You are a Medical Intake Form Helper embedded inside a patient check-in interface.
 
-Your job is to guide a patient through a medical intake conversation in a clear, supportive, and simple way. You are helping build one dynamic visit-specific intake section behind the scenes as the patient answers questions.
+Your job is to guide a patient through a medical intake conversation in a clear, supportive, and simple way. You are helping build a draft intake form behind the scenes as the patient answers questions.
 
 High-level goal:
+- Start with visit-specific intake.
+- When asked to focus on another section, continue helping with that section instead of only the visit.
 - Do NOT behave like a fixed questionnaire.
-- Infer what kind of visit this is from the patient's words.
-- Ask only the most relevant next question for THIS visit.
-- Build a dynamic clinician-facing section that changes based on the visit.
+- Ask only the most relevant next question for the current section.
 
 Core behavior:
 - Ask only 1 main question at a time.
 - Keep the visible chat question short, natural, and patient-friendly.
 - Do not give diagnoses, treatment plans, urgency advice, or medical advice.
-- Focus only on collecting visit intake information.
-- Use the patient's meaning, but rewrite the draft in cleaner clinician-friendly wording.
-- Correct obvious spelling mistakes when the meaning is clear. Example: if the patient types "comrooked" and clearly means "crooked", use "crooked" in the draft.
+- Use the patient's meaning, but rewrite the draft in cleaner clinician-friendly wording when needed.
+- Correct obvious spelling mistakes when the meaning is clear.
 - Preserve uncertainty when the patient is unsure. Do not guess.
-- Do not force every visit into the same fixed fields or the same question order.
-- Omit irrelevant fields. Add only fields that matter for this visit.
-- Background profile, insurance, and medical history are already handled elsewhere. Your main job is the visit-specific section and any optional extra note.
-
-Questioning strategy:
-- First understand the main concern.
-- Then infer the likely visit type from the conversation.
-- Ask the next most useful follow-up based on what is already known and what is still missing.
 - Avoid repeating information the patient already gave.
-- Ask fewer questions when the draft is already useful.
-- Switch to form_review mode as soon as there is enough meaningful information for a clinician-facing draft.
+- Switch to form_review mode as soon as the CURRENT section has enough useful information.
 
-Drafting strategy:
+Section rules:
+- active_section tells you what part of the intake to work on right now.
+- If active_section is visit_context, build a dynamic clinician-facing visit section that changes based on the visit.
+- If active_section is patient_information, only collect patient information fields.
+- If active_section is insurance_information, only collect insurance fields.
+- If active_section is medical_history, only collect medical history fields.
+- Only update the section you are actively working on, plus optional additional_concerns when clearly relevant.
+
+Visit drafting strategy:
 - Generate a visit-specific section title and subtitle based on the appointment.
 - Generate a polished summary_for_clinician in normal clinician-friendly language.
 - relevant_fields should be dynamic and visit-specific, not a recycled template.
-- Normalize patient wording where appropriate.
-- If a patient gives a typo or lay wording, rewrite it clearly in the draft while preserving the intended meaning.
-- relevant_fields should capture clinically useful details like location, onset, trigger, severity pattern, associated symptoms, visible changes, etc only when relevant.
+- relevant_fields should capture clinically useful details like location, onset, trigger, severity pattern, associated symptoms, visible changes, and similar details only when relevant.
 
 Output rules:
 - Return JSON only.
 - display_message is the only text shown in the chat bubble.
 - plain_language_definition and why_we_are_asking are hidden support fields for the interface.
 - current_focus_label should be a short label describing what you are asking for right now.
+- patient_information, insurance_information, and medical_history may be included when those sections are active.
 - visit_context.section_title should be tailored to the visit, such as "Finger Injury Summary" or "Back Pain Summary".
 - visit_context.section_subtitle should briefly explain what this generated section covers.
 - visit_context.visit_category should be a concise normalized category.
@@ -146,6 +166,27 @@ function normalizeAgentResponse(raw: any): AgentResponse {
     plain_language_definition: String(raw?.plain_language_definition || DEFAULT_HELPER.plainLanguageDefinition),
     why_we_are_asking: String(raw?.why_we_are_asking || DEFAULT_HELPER.whyWeAreAsking),
     current_focus_label: String(raw?.current_focus_label || 'Visit details'),
+    patient_information: {
+      full_name: String(raw?.patient_information?.full_name || ''),
+      date_of_birth: String(raw?.patient_information?.date_of_birth || ''),
+      phone_number: String(raw?.patient_information?.phone_number || ''),
+      email: String(raw?.patient_information?.email || ''),
+      address: String(raw?.patient_information?.address || ''),
+      source_note: String(raw?.patient_information?.source_note || ''),
+    },
+    insurance_information: {
+      provider_name: String(raw?.insurance_information?.provider_name || ''),
+      member_id: String(raw?.insurance_information?.member_id || ''),
+      group_number: String(raw?.insurance_information?.group_number || ''),
+      source_note: String(raw?.insurance_information?.source_note || ''),
+    },
+    medical_history: {
+      allergies: String(raw?.medical_history?.allergies || ''),
+      current_medications: String(raw?.medical_history?.current_medications || ''),
+      past_surgeries_or_hospitalizations: String(raw?.medical_history?.past_surgeries_or_hospitalizations || ''),
+      family_history: String(raw?.medical_history?.family_history || ''),
+      source_note: String(raw?.medical_history?.source_note || ''),
+    },
     visit_context: {
       section_title: String(raw?.visit_context?.section_title || ''),
       section_subtitle: String(raw?.visit_context?.section_subtitle || ''),
@@ -162,6 +203,50 @@ function normalizeAgentResponse(raw: any): AgentResponse {
   };
 }
 
+
+const COMPLETION_SECTION_LABELS: Record<Exclude<AgentSection, "visit_context">, string> = {
+  patient_information: "patient information",
+  insurance_information: "insurance information",
+  medical_history: "medical history",
+};
+
+function hasMeaningfulValue(value: unknown) {
+  return String(value || '').trim().length > 0;
+}
+
+function getMissingSections(draftForm: ReturnType<typeof useIntake>['draftForm']): Exclude<AgentSection, "visit_context">[] {
+  const missing: Exclude<AgentSection, "visit_context">[] = [];
+
+  const patientInfoKeys: (keyof typeof draftForm.patient_information)[] = ['full_name', 'date_of_birth', 'phone_number', 'email', 'address'];
+  const insuranceKeys: (keyof typeof draftForm.insurance_information)[] = ['provider_name', 'member_id', 'group_number'];
+  const medicalKeys: (keyof typeof draftForm.medical_history)[] = ['allergies', 'current_medications', 'past_surgeries_or_hospitalizations', 'family_history'];
+
+  if (patientInfoKeys.some((key) => !hasMeaningfulValue(draftForm.patient_information[key]))) missing.push('patient_information');
+  if (insuranceKeys.some((key) => !hasMeaningfulValue(draftForm.insurance_information[key]))) missing.push('insurance_information');
+  if (medicalKeys.some((key) => !hasMeaningfulValue(draftForm.medical_history[key]))) missing.push('medical_history');
+
+  return missing;
+}
+
+function isYesResponse(text: string) {
+  return /^(yes|yeah|yep|sure|ok|okay|please do|go ahead|continue|help me|lets do it|let's do it)\b/i.test(text.trim());
+}
+
+function isNoResponse(text: string) {
+  return /^(no|nope|nah|not now|skip|pass|maybe later)\b/i.test(text.trim());
+}
+
+function buildCompletionOffer(section: Exclude<AgentSection, "visit_context">) {
+  const label = COMPLETION_SECTION_LABELS[section];
+  return `I noticed your ${label} is still incomplete. Would you like me to help you fill that out?`;
+}
+
+function compactPatch<T extends Record<string, any> | undefined>(value: T): Partial<NonNullable<T>> | undefined {
+  if (!value) return undefined;
+  const entries = Object.entries(value).filter(([_, entryValue]) => String(entryValue || '').trim().length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) as Partial<NonNullable<T>> : undefined;
+}
+
 const AGENT_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -170,6 +255,36 @@ const AGENT_RESPONSE_SCHEMA = {
     plain_language_definition: { type: 'STRING' },
     why_we_are_asking: { type: 'STRING' },
     current_focus_label: { type: 'STRING' },
+    patient_information: {
+      type: 'OBJECT',
+      properties: {
+        full_name: { type: 'STRING' },
+        date_of_birth: { type: 'STRING' },
+        phone_number: { type: 'STRING' },
+        email: { type: 'STRING' },
+        address: { type: 'STRING' },
+        source_note: { type: 'STRING' },
+      },
+    },
+    insurance_information: {
+      type: 'OBJECT',
+      properties: {
+        provider_name: { type: 'STRING' },
+        member_id: { type: 'STRING' },
+        group_number: { type: 'STRING' },
+        source_note: { type: 'STRING' },
+      },
+    },
+    medical_history: {
+      type: 'OBJECT',
+      properties: {
+        allergies: { type: 'STRING' },
+        current_medications: { type: 'STRING' },
+        past_surgeries_or_hospitalizations: { type: 'STRING' },
+        family_history: { type: 'STRING' },
+        source_note: { type: 'STRING' },
+      },
+    },
     visit_context: {
       type: 'OBJECT',
       properties: {
@@ -211,11 +326,13 @@ function buildPayload(args: {
   draftForm: ReturnType<typeof useIntake>['draftForm'];
   conversation: Message[];
   isInitialTurn: boolean;
+  activeSection: AgentSection;
 }) {
-  const { profile, draftForm, conversation, isInitialTurn } = args;
+  const { profile, draftForm, conversation, isInitialTurn, activeSection } = args;
 
   return {
     is_initial_turn: isInitialTurn,
+    active_section: activeSection,
     patient_profile_summary: {
       full_name: `${profile.firstName} ${profile.lastName}`.trim(),
       upcoming_provider: profile.upcomingProvider,
@@ -243,6 +360,7 @@ async function requestGeminiAgent(args: {
   draftForm: ReturnType<typeof useIntake>['draftForm'];
   conversation: Message[];
   isInitialTurn: boolean;
+  activeSection: AgentSection;
 }) {
   const body = {
     systemInstruction: {
@@ -311,6 +429,8 @@ export default function ChatTab() {
   const [activeInfo, setActiveInfo] = useState(DEFAULT_HELPER);
   const [dockHeight, setDockHeight] = useState(96);
   const [inputHeight, setInputHeight] = useState(22);
+  const [activeSection, setActiveSection] = useState<AgentSection>('visit_context');
+  const [completionOfferSection, setCompletionOfferSection] = useState<Exclude<AgentSection, 'visit_context'> | null>(null);
 
   const listRef = useRef<FlatList<Message>>(null);
   const inputRef = useRef<TextInput>(null);
@@ -336,6 +456,8 @@ export default function ChatTab() {
       setInputHeight(22);
       setCurrentRequestedField('Main reason for visit');
       setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+      setActiveSection('visit_context');
+      setCompletionOfferSection(null);
       resetVisitContext();
       return;
     }
@@ -347,14 +469,18 @@ export default function ChatTab() {
       setInputHeight(22);
       setCurrentRequestedField('Main reason for visit');
       setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+      setActiveSection('visit_context');
+      setCompletionOfferSection(null);
       resetVisitContext();
     }
   }, [hasAcceptedPrivacy, isAiEnabled, resetVisitContext, setCurrentRequestedField, setHelperInfo]);
 
-  const runAgentTurn = async (conversation: Message[], isInitialTurn: boolean) => {
+  const runAgentTurn = async (conversation: Message[], isInitialTurn: boolean, sectionOverride?: AgentSection) => {
     if (!apiKey) {
       throw new Error('Gemini API key not found. Add EXPO_PUBLIC_GEMINI_API_KEY or EXPO_PUBLIC_API_KEY to your Expo env.');
     }
+
+    const workingSection = sectionOverride || activeSection;
 
     const agent = await requestGeminiAgent({
       apiKey,
@@ -363,11 +489,20 @@ export default function ChatTab() {
       draftForm,
       conversation,
       isInitialTurn,
+      activeSection: workingSection,
     });
 
+    const patientPatch = compactPatch(agent.patient_information);
+    const insurancePatch = compactPatch(agent.insurance_information);
+    const historyPatch = compactPatch(agent.medical_history);
+    const additionalConcernsPatch = compactPatch(agent.additional_concerns);
+
     applyAgentDraft({
+      patient_information: patientPatch,
+      insurance_information: insurancePatch,
+      medical_history: historyPatch,
       visit_context: agent.visit_context,
-      additional_concerns: agent.additional_concerns,
+      additional_concerns: additionalConcernsPatch,
     });
     setCurrentRequestedField(agent.current_focus_label);
     setHelperInfo(agent.plain_language_definition, agent.why_we_are_asking);
@@ -380,7 +515,70 @@ export default function ChatTab() {
       whyWeAreAsking: agent.why_we_are_asking,
     };
 
-    setMessages([...conversation, aiMessage]);
+    const nextConversation = [...conversation, aiMessage];
+    setMessages(nextConversation);
+
+    if (agent.mode === 'form_review') {
+      const mergedDraft = {
+        ...draftForm,
+        patient_information: { ...draftForm.patient_information, ...patientPatch },
+        insurance_information: { ...draftForm.insurance_information, ...insurancePatch },
+        medical_history: { ...draftForm.medical_history, ...historyPatch },
+        visit_context: agent.visit_context ? { ...draftForm.visit_context, ...agent.visit_context } : draftForm.visit_context,
+        additional_concerns: { ...draftForm.additional_concerns, ...additionalConcernsPatch },
+      };
+
+      if (workingSection === 'visit_context') {
+        const missingSections = getMissingSections(mergedDraft);
+        if (missingSections.length > 0) {
+          const nextSection = missingSections[0];
+          setCompletionOfferSection(nextSection);
+          setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
+          const offerMessage: Message = {
+            id: makeId('ai-offer'),
+            sender: 'ai',
+            text: buildCompletionOffer(nextSection),
+            plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
+            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+          };
+          setMessages([...nextConversation, offerMessage]);
+          setTimeout(() => scrollToLatest(true), 120);
+          return;
+        }
+      } else {
+        const missingSections = getMissingSections(mergedDraft).filter((section) => section !== workingSection);
+        if (missingSections.length > 0) {
+          const nextSection = missingSections[0];
+          setCompletionOfferSection(nextSection);
+          setActiveSection('visit_context');
+          setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
+          const offerMessage: Message = {
+            id: makeId('ai-offer'),
+            sender: 'ai',
+            text: buildCompletionOffer(nextSection),
+            plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
+            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+          };
+          setMessages([...nextConversation, offerMessage]);
+          setTimeout(() => scrollToLatest(true), 120);
+          return;
+        }
+
+        setCompletionOfferSection(null);
+        setActiveSection('visit_context');
+        const doneMessage: Message = {
+          id: makeId('ai-done'),
+          sender: 'ai',
+          text: 'Thanks. Your intake draft looks complete now and is ready for review.',
+          plainLanguageDefinition: 'Your intake form now has information in the main sections needed for review.',
+          whyWeAreAsking: 'A more complete draft helps the clinician review your visit faster.',
+        };
+        setMessages([...nextConversation, doneMessage]);
+        setTimeout(() => scrollToLatest(true), 120);
+        return;
+      }
+    }
+
     setTimeout(() => scrollToLatest(true), 120);
   };
 
@@ -433,6 +631,72 @@ export default function ChatTab() {
     setInputHeight(22);
     Keyboard.dismiss();
     inputRef.current?.blur();
+
+    if (completionOfferSection) {
+      if (isYesResponse(userText)) {
+        setCompletionOfferSection(null);
+        setActiveSection(completionOfferSection);
+        setIsLoading(true);
+        try {
+          await runAgentTurn(nextConversation, true, completionOfferSection);
+        } catch (error) {
+          setMessages([
+            ...nextConversation,
+            {
+              id: makeId('ai-error'),
+              sender: 'ai',
+              text: `I had trouble updating that section. ${error instanceof Error ? error.message : 'Please try again.'}`,
+              plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
+              whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
+            },
+          ]);
+        } finally {
+          setIsLoading(false);
+          setTimeout(() => scrollToLatest(true), 120);
+        }
+        return;
+      }
+
+      if (isNoResponse(userText)) {
+        const remainingSections = getMissingSections(draftForm).filter((section) => section !== completionOfferSection);
+        if (remainingSections.length > 0) {
+          const nextSection = remainingSections[0];
+          setCompletionOfferSection(nextSection);
+          const offerMessage: Message = {
+            id: makeId('ai-offer'),
+            sender: 'ai',
+            text: buildCompletionOffer(nextSection),
+            plainLanguageDefinition: 'This means another part of your intake form still has blank fields.',
+            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+          };
+          setMessages([...nextConversation, offerMessage]);
+        } else {
+          setCompletionOfferSection(null);
+          const doneMessage: Message = {
+            id: makeId('ai-done'),
+            sender: 'ai',
+            text: 'Understood. There are no other incomplete sections I need to ask about right now.',
+            plainLanguageDefinition: 'You chose not to fill the remaining section right now.',
+            whyWeAreAsking: 'The care team can still review what you already completed.',
+          };
+          setMessages([...nextConversation, doneMessage]);
+        }
+        setTimeout(() => scrollToLatest(true), 120);
+        return;
+      }
+
+      const clarifyMessage: Message = {
+        id: makeId('ai-offer-clarify'),
+        sender: 'ai',
+        text: 'Please reply yes or no so I know whether to help with that section next.',
+        plainLanguageDefinition: 'I am checking whether you want help filling the incomplete section.',
+        whyWeAreAsking: 'This keeps the intake flow moving one section at a time.',
+      };
+      setMessages([...nextConversation, clarifyMessage]);
+      setTimeout(() => scrollToLatest(true), 120);
+      return;
+    }
+
     setIsLoading(true);
 
     try {

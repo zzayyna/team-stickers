@@ -64,7 +64,7 @@ type IntakeContextValue = {
   helperInfo: { plainLanguageDefinition: string; whyWeAreAsking: string };
   updateFromProfile: () => void;
   resetVisitContext: () => void;
-  applyAgentDraft: (patch: { visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => void;
+  applyAgentDraft: (patch: { patient_information?: Partial<IntakeData['patient_information']>; insurance_information?: Partial<IntakeData['insurance_information']>; medical_history?: Partial<IntakeData['medical_history']>; visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => void;
   updateSectionField: <S extends keyof SectionMap, F extends keyof SectionMap[S]>(section: S, field: F, value: string) => void;
   addRelevantField: () => void;
   removeRelevantField: (index: number) => void;
@@ -192,8 +192,20 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const applyAgentDraft = useCallback((patch: { visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => {
+  const applyAgentDraft = useCallback((patch: { patient_information?: Partial<IntakeData['patient_information']>; insurance_information?: Partial<IntakeData['insurance_information']>; medical_history?: Partial<IntakeData['medical_history']>; visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => {
     setDraftForm((prev) => {
+      const nextPatientInformation = patch.patient_information
+        ? { ...prev.patient_information, ...patch.patient_information }
+        : prev.patient_information;
+
+      const nextInsuranceInformation = patch.insurance_information
+        ? { ...prev.insurance_information, ...patch.insurance_information }
+        : prev.insurance_information;
+
+      const nextMedicalHistory = patch.medical_history
+        ? { ...prev.medical_history, ...patch.medical_history }
+        : prev.medical_history;
+
       const nextVisitContext = patch.visit_context
         ? normalizeVisitContext({
             ...prev.visit_context,
@@ -211,6 +223,9 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
 
       return {
         ...prev,
+        patient_information: nextPatientInformation,
+        insurance_information: nextInsuranceInformation,
+        medical_history: nextMedicalHistory,
         visit_context: nextVisitContext,
         additional_concerns: nextAdditionalConcerns,
       };

@@ -291,6 +291,12 @@ export default function Profile() {
         {!editing && !profile.upcomingProvider ? <Text style={styles.fieldValue}>No upcoming appointment scheduled.</Text> : null}
       </Section>
 
+      {editing ? (
+        <TouchableOpacity onPress={save} style={[styles.saveBtn, styles.bottomSaveBtn]} disabled={saving}>
+          <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save changes'}</Text>
+        </TouchableOpacity>
+      ) : null}
+
       <TouchableOpacity style={styles.signOutButton} onPress={ async () => { 
           await supabase.auth.signOut(); 
           router.replace('/(auth)/login')
@@ -317,6 +323,7 @@ const styles = StyleSheet.create({
   cancelBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#D3D1C7' },
   cancelBtnText: { color: '#888780', fontSize: 13 },
   saveBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: '#E8820C' },
+  bottomSaveBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 14, marginTop: 8, marginBottom: 10 },
   saveBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   card: { backgroundColor: '#fff', borderRadius: 18, padding: 18, borderWidth: 1, borderColor: '#E5DED4', marginBottom: 14 },
   cardHeader: { marginBottom: 12 },
