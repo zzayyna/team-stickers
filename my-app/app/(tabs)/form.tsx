@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useIntake, type RelevantVisitField, type SectionStatus } from '../../context/IntakeContext';
 import { usePatientProfile } from '../../context/PatientProfileContext';
+import { supabase } from '../../lib/supabase';
 
 const statusMap: Record<SectionStatus, { label: string; tone: string; bg: string; border: string }> = {
   not_started: { label: 'Not started', tone: '#8D857B', bg: '#F6F1E8', border: '#E5DED4' },
@@ -77,6 +78,9 @@ export default function IntakeReview() {
   const { profile } = usePatientProfile();
   const { draftForm, sectionStatus } = useIntake();
   const [expandedSection, setExpandedSection] = useState<SectionKey | null>('visit_details');
+  const [saving, setSaving] = useState(false);
+  const [currentFormId, setCurrentFormId] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const completedCount = Object.values(sectionStatus).filter((status) => status !== 'not_started').length;
   const headerTitle = `${profile.firstName} ${profile.lastName}`;
@@ -90,6 +94,67 @@ export default function IntakeReview() {
   const visitSectionSubtitle = draftForm.visit_context.section_subtitle.trim() || 'Created dynamically from your conversation for this appointment';
 
   const toggle = (key: SectionKey) => setExpandedSection((prev) => (prev === key ? null : key));
+
+  const saveFormToDatabase = async () => {
+    try {
+      setSaving(true);
+
+      const { data: authData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error getting user:', userError);
+        return;
+      }
+
+      const user = authData.user;
+      if (!user) {
+        console.error('No authenticated user found');
+        return;
+      }
+
+      const payload = {
+        user_id: user.id,
+        patient_information: draftForm.patient_information,
+        insurance_information: draftForm.insurance_information,
+        medical_history: draftForm.medical_history,
+        visit_context: draftForm.visit_context,
+        additional_concerns: draftForm.additional_concerns,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (currentFormId) {
+        const { error } = await supabase
+          .from('intake_forms')
+          .update(payload)
+          .eq('id', currentFormId);
+
+        if (error) {
+          console.error('Error updating form:', error);
+          return;
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('intake_forms')
+          .insert(payload)
+          .select('id')
+          .single();
+
+        if (error) {
+          console.error('Error creating form:', error);
+          return;
+        }
+
+        setCurrentFormId(data.id);
+      }
+
+      console.log('Form saved successfully');
+      setSaveSuccess(true);
+
+    } catch (err) {
+      console.error('Unexpected form save error:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -178,6 +243,19 @@ export default function IntakeReview() {
         <DetailLine label="Patient notes" value={draftForm.additional_concerns.patient_notes} />
         <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
       </SectionCard>
+
+      {saveSuccess && (
+        <Text style={{ textAlign: 'center', color: 'green', marginTop: 10 }}>
+          ✓ Saved successfully
+        </Text>
+      )}
+
+      <TouchableOpacity onPress={saveFormToDatabase} style={styles.saveButton} disabled={saving}>
+        <Text style={styles.saveText}>
+          {saving ? 'Saving...' : 'Save'}
+        </Text>
+      </TouchableOpacity>
+
     </ScrollView>
   );
 }
@@ -206,4 +284,6 @@ const styles = StyleSheet.create({
   detailLine: { gap: 4 },
   detailLabel: { fontSize: 12, color: '#8E857A', textTransform: 'uppercase', letterSpacing: 0.9 },
   detailValue: { fontSize: 15, color: '#2B2926', lineHeight: 21 },
+  saveButton: { backgroundColor: '#E8820C', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  saveText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

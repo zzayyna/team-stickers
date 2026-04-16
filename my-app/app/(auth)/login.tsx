@@ -1,7 +1,7 @@
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useState } from 'react';
 import { router } from 'expo-router';
-// import { supabase } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -9,27 +9,50 @@ export default function Login() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    //   const handleLogin = async () => {
-    //     if (!email || !password) { setError('Please fill in all fields.'); return; }
-    //     setLoading(true);
-    //     // const { error } = await supabase.auth.signInWithPassword({ email, password });
-    //     setLoading(false);
-    //     // if (error) { setError(error.message); }
-    //     // else { router.replace('/(tabs)/'); }
-    //   };
-
     const handleLogin = async () => {
-        if (!email || !password) { setError('Please fill in all fields.'); return; }
-        router.replace('/');
+        if (!email || !password) { 
+            setError('Please fill in all fields.'); 
+            return; 
+        }
+
+        setError('');
+        setLoading(true);
+
+        const { error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        setLoading(false);
+
+        if (error) {
+            setError(error.message);
+            return;
+        }
     };
 
     const handleSignUp = async () => {
-        if (!email || !password) { setError('Please fill in all fields.'); return; }
+        if (!email || !password) { 
+            setError('Please fill in all fields.');
+            return;
+        }
+        
+        setError('');
         setLoading(true);
-        // const { error } = await supabase.auth.signUp({ email, password });
+
+        const { error } = await supabase.auth.signUp({
+            email,
+            password,
+        });
+
         setLoading(false);
-        // if (error) { setError(error.message); }
-        // else { setError('Check your email to confirm your account!'); }
+
+        if (error) {
+            setError(error.message);
+            return;
+        }
+
+        setError('Account created. Check your email if confirmation is required, then sign in.');
     };
 
     return (
