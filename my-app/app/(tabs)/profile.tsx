@@ -334,9 +334,22 @@ export default function Profile() {
 
         <TouchableOpacity
           style={styles.signOutButton}
-          onPress={async () => {
-            await supabase.auth.signOut()
-            router.replace('/(auth)/login')
+          onPress={() => {
+            Alert.alert(
+              'Sign out',
+              'Are you sure you want to sign out?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Sign out',
+                  style: 'destructive',
+                  onPress: async () => {
+                    await supabase.auth.signOut()
+                    router.replace('/(auth)/login')
+                  }
+                },
+              ]
+            )
           }}
         >
           <Ionicons name="log-out-outline" size={18} color="#A32D2D" />

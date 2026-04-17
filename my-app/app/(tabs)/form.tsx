@@ -210,14 +210,13 @@ export default function IntakeReview() {
           </Text>
 
           <View style={styles.heroActionRow}>
-            <TouchableOpacity style={[styles.heroAction, styles.secondaryAction]} onPress={() => setEditingEnabled((prev) => !prev)}>
-              <Text style={styles.secondaryActionText}>{editingEnabled ? 'View only' : 'Edit intake'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.heroAction} onPress={saveFormToDatabase} disabled={saving}>
-              <Text style={styles.heroActionText}>{saving ? 'Saving...' : 'Save intake'}</Text>
-            </TouchableOpacity>
+            <View style={styles.modeToggleContainer}>
+              <Text style={styles.modeLabel}>{editingEnabled ? 'Editing' : 'Viewing'}</Text>
+              <TouchableOpacity style={styles.modeToggleBtn} onPress={() => setEditingEnabled((prev) => !prev)}>
+                <Text style={styles.modeToggleText}>{editingEnabled ? 'Switch to view' : 'Switch to edit'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          {saveSuccess ? <Text style={styles.saveSuccess}>Saved successfully.</Text> : null}
         </View>
 
         <SectionCard
@@ -359,7 +358,7 @@ export default function IntakeReview() {
           {editingEnabled ? (
             <>
               <EditableField label="Patient notes" value={draftForm.additional_concerns.patient_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'patient_notes', value)} />
-              <EditableField label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'ai_drafted_notes', value)} />
+              <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
             </>
           ) : (
             <>
@@ -368,6 +367,11 @@ export default function IntakeReview() {
             </>
           )}
         </SectionCard>
+
+        <TouchableOpacity style={styles.bottomSaveBtn} onPress={saveFormToDatabase} disabled={saving}>
+          <Text style={styles.bottomSaveText}>{saving ? 'Saving...' : 'Save intake'}</Text>
+        </TouchableOpacity>
+        {saveSuccess ? <Text style={styles.saveSuccess}>Saved successfully.</Text> : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -375,7 +379,7 @@ export default function IntakeReview() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F5F0' },
-  content: { padding: 20, paddingBottom: 36 },
+  content: { padding: 20, paddingBottom: 100 },
   heroCard: { backgroundColor: '#FFFFFF', borderRadius: 24, borderWidth: 1, borderColor: '#E5DED4', padding: 20, marginBottom: 18 },
   heroTitle: { fontSize: 26, fontWeight: '700', color: '#2C2C2A', marginBottom: 4 },
   heroSubtitle: { fontSize: 14, color: '#6F6A63', marginBottom: 14 },
@@ -414,4 +418,40 @@ const styles = StyleSheet.create({
   dynamicFieldCard: { borderWidth: 1, borderColor: '#E8E0D4', borderRadius: 16, padding: 12, backgroundColor: '#FFFEFC' },
   dynamicFieldHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   dynamicFieldTitle: { fontSize: 14, fontWeight: '700', color: '#2C2C2A' },
+  bottomSaveBtn: {
+    backgroundColor: '#E8820C',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  bottomSaveText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modeToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  modeLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2C2C2A',
+  },
+  modeToggleBtn: {
+    backgroundColor: '#F6F1E8',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5DED4',
+  },
+  modeToggleText: {
+    fontSize: 13,
+    color: '#6F6A63',
+    fontWeight: '500',
+  },
 });
