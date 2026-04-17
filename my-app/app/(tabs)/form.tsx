@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useIntake, type RelevantVisitField, type SectionStatus } from '../../context/IntakeContext';
 import { usePatientProfile } from '../../context/PatientProfileContext';
 import { useAiAssistant } from '../../context/AiAssistantContext';
@@ -196,178 +196,180 @@ export default function IntakeReview() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.heroCard}>
-        <Text style={styles.heroTitle}>{headerTitle}</Text>
-        <Text style={styles.heroSubtitle}>{headerSubtitle}</Text>
-        <View style={styles.progressRow}>
-          {[0, 1, 2, 3, 4].map((i) => <View key={i} style={[styles.progressBar, i < completedCount ? styles.progressBarActive : null]} />)}
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.heroCard}>
+          <Text style={styles.heroTitle}>{headerTitle}</Text>
+          <Text style={styles.heroSubtitle}>{headerSubtitle}</Text>
+          <View style={styles.progressRow}>
+            {[0, 1, 2, 3, 4].map((i) => <View key={i} style={[styles.progressBar, i < completedCount ? styles.progressBarActive : null]} />)}
+          </View>
+          <Text style={styles.progressText}>Intake sections {completedCount}/5</Text>
+          <Text style={styles.heroBody}>
+            Saved profile information fills the background sections. Visit-specific details can come from the AI conversation or be entered manually when the patient skips AI.
+          </Text>
+
+          <View style={styles.heroActionRow}>
+            <TouchableOpacity style={[styles.heroAction, styles.secondaryAction]} onPress={() => setEditingEnabled((prev) => !prev)}>
+              <Text style={styles.secondaryActionText}>{editingEnabled ? 'View only' : 'Edit intake'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.heroAction} onPress={saveFormToDatabase} disabled={saving}>
+              <Text style={styles.heroActionText}>{saving ? 'Saving...' : 'Save intake'}</Text>
+            </TouchableOpacity>
+          </View>
+          {saveSuccess ? <Text style={styles.saveSuccess}>Saved successfully.</Text> : null}
         </View>
-        <Text style={styles.progressText}>Intake sections {completedCount}/5</Text>
-        <Text style={styles.heroBody}>
-          Saved profile information fills the background sections. Visit-specific details can come from the AI conversation or be entered manually when the patient skips AI.
-        </Text>
 
-        <View style={styles.heroActionRow}>
-          <TouchableOpacity style={[styles.heroAction, styles.secondaryAction]} onPress={() => setEditingEnabled((prev) => !prev)}>
-            <Text style={styles.secondaryActionText}>{editingEnabled ? 'View only' : 'Edit intake'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.heroAction} onPress={saveFormToDatabase} disabled={saving}>
-            <Text style={styles.heroActionText}>{saving ? 'Saving...' : 'Save intake'}</Text>
-          </TouchableOpacity>
-        </View>
-        {saveSuccess ? <Text style={styles.saveSuccess}>Saved successfully.</Text> : null}
-      </View>
+        <SectionCard
+          icon="person-circle-outline"
+          title="Patient Information"
+          subtitle="Demographics, contact info"
+          detail={draftForm.patient_information.source_note || 'This section has not been filled out yet.'}
+          status={sectionStatus.patient_information}
+          expanded={expandedSection === 'patient_information'}
+          onPress={() => toggle('patient_information')}
+        >
+          {editingEnabled ? (
+            <>
+              <EditableField label="Full name" value={draftForm.patient_information.full_name} onChangeText={(value) => updateSectionField('patient_information', 'full_name', value)} />
+              <EditableField label="Date of birth" value={draftForm.patient_information.date_of_birth} onChangeText={(value) => updateSectionField('patient_information', 'date_of_birth', value)} />
+              <EditableField label="Phone" value={draftForm.patient_information.phone_number} onChangeText={(value) => updateSectionField('patient_information', 'phone_number', value)} />
+              <EditableField label="Email" value={draftForm.patient_information.email} onChangeText={(value) => updateSectionField('patient_information', 'email', value)} />
+              <EditableField label="Address" value={draftForm.patient_information.address} multiline onChangeText={(value) => updateSectionField('patient_information', 'address', value)} />
+            </>
+          ) : (
+            <>
+              <DetailLine label="Full name" value={draftForm.patient_information.full_name} />
+              <DetailLine label="Date of birth" value={draftForm.patient_information.date_of_birth} />
+              <DetailLine label="Phone" value={draftForm.patient_information.phone_number} />
+              <DetailLine label="Email" value={draftForm.patient_information.email} />
+              <DetailLine label="Address" value={draftForm.patient_information.address} />
+            </>
+          )}
+        </SectionCard>
 
-      <SectionCard
-        icon="person-circle-outline"
-        title="Patient Information"
-        subtitle="Demographics, contact info"
-        detail={draftForm.patient_information.source_note || 'This section has not been filled out yet.'}
-        status={sectionStatus.patient_information}
-        expanded={expandedSection === 'patient_information'}
-        onPress={() => toggle('patient_information')}
-      >
-        {editingEnabled ? (
-          <>
-            <EditableField label="Full name" value={draftForm.patient_information.full_name} onChangeText={(value) => updateSectionField('patient_information', 'full_name', value)} />
-            <EditableField label="Date of birth" value={draftForm.patient_information.date_of_birth} onChangeText={(value) => updateSectionField('patient_information', 'date_of_birth', value)} />
-            <EditableField label="Phone" value={draftForm.patient_information.phone_number} onChangeText={(value) => updateSectionField('patient_information', 'phone_number', value)} />
-            <EditableField label="Email" value={draftForm.patient_information.email} onChangeText={(value) => updateSectionField('patient_information', 'email', value)} />
-            <EditableField label="Address" value={draftForm.patient_information.address} multiline onChangeText={(value) => updateSectionField('patient_information', 'address', value)} />
-          </>
-        ) : (
-          <>
-            <DetailLine label="Full name" value={draftForm.patient_information.full_name} />
-            <DetailLine label="Date of birth" value={draftForm.patient_information.date_of_birth} />
-            <DetailLine label="Phone" value={draftForm.patient_information.phone_number} />
-            <DetailLine label="Email" value={draftForm.patient_information.email} />
-            <DetailLine label="Address" value={draftForm.patient_information.address} />
-          </>
-        )}
-      </SectionCard>
+        <SectionCard
+          icon="shield-checkmark-outline"
+          title="Insurance"
+          subtitle="Current coverage and policy details"
+          detail={draftForm.insurance_information.source_note || 'This section has not been filled out yet.'}
+          status={sectionStatus.insurance}
+          expanded={expandedSection === 'insurance'}
+          onPress={() => toggle('insurance')}
+        >
+          {editingEnabled ? (
+            <>
+              <EditableField label="Provider" value={draftForm.insurance_information.provider_name} onChangeText={(value) => updateSectionField('insurance_information', 'provider_name', value)} />
+              <EditableField label="Member ID" value={draftForm.insurance_information.member_id} onChangeText={(value) => updateSectionField('insurance_information', 'member_id', value)} />
+              <EditableField label="Group number" value={draftForm.insurance_information.group_number} onChangeText={(value) => updateSectionField('insurance_information', 'group_number', value)} />
+            </>
+          ) : (
+            <>
+              <DetailLine label="Provider" value={draftForm.insurance_information.provider_name} />
+              <DetailLine label="Member ID" value={draftForm.insurance_information.member_id} />
+              <DetailLine label="Group number" value={draftForm.insurance_information.group_number} />
+            </>
+          )}
+        </SectionCard>
 
-      <SectionCard
-        icon="shield-checkmark-outline"
-        title="Insurance"
-        subtitle="Current coverage and policy details"
-        detail={draftForm.insurance_information.source_note || 'This section has not been filled out yet.'}
-        status={sectionStatus.insurance}
-        expanded={expandedSection === 'insurance'}
-        onPress={() => toggle('insurance')}
-      >
-        {editingEnabled ? (
-          <>
-            <EditableField label="Provider" value={draftForm.insurance_information.provider_name} onChangeText={(value) => updateSectionField('insurance_information', 'provider_name', value)} />
-            <EditableField label="Member ID" value={draftForm.insurance_information.member_id} onChangeText={(value) => updateSectionField('insurance_information', 'member_id', value)} />
-            <EditableField label="Group number" value={draftForm.insurance_information.group_number} onChangeText={(value) => updateSectionField('insurance_information', 'group_number', value)} />
-          </>
-        ) : (
-          <>
-            <DetailLine label="Provider" value={draftForm.insurance_information.provider_name} />
-            <DetailLine label="Member ID" value={draftForm.insurance_information.member_id} />
-            <DetailLine label="Group number" value={draftForm.insurance_information.group_number} />
-          </>
-        )}
-      </SectionCard>
+        <SectionCard
+          icon="medical-outline"
+          title="Medical History"
+          subtitle="Conditions, medications, allergies"
+          detail={draftForm.medical_history.source_note || 'This section has not been filled out yet.'}
+          status={sectionStatus.medical_history}
+          expanded={expandedSection === 'medical_history'}
+          onPress={() => toggle('medical_history')}
+        >
+          {editingEnabled ? (
+            <>
+              <EditableField label="Allergies" value={draftForm.medical_history.allergies} multiline onChangeText={(value) => updateSectionField('medical_history', 'allergies', value)} />
+              <EditableField label="Current medications" value={draftForm.medical_history.current_medications} multiline onChangeText={(value) => updateSectionField('medical_history', 'current_medications', value)} />
+              <EditableField label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} multiline onChangeText={(value) => updateSectionField('medical_history', 'past_surgeries_or_hospitalizations', value)} />
+              <EditableField label="Family history" value={draftForm.medical_history.family_history} multiline onChangeText={(value) => updateSectionField('medical_history', 'family_history', value)} />
+            </>
+          ) : (
+            <>
+              <DetailLine label="Allergies" value={draftForm.medical_history.allergies} />
+              <DetailLine label="Current medications" value={draftForm.medical_history.current_medications} />
+              <DetailLine label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} />
+              <DetailLine label="Family history" value={draftForm.medical_history.family_history} />
+            </>
+          )}
+        </SectionCard>
 
-      <SectionCard
-        icon="medical-outline"
-        title="Medical History"
-        subtitle="Conditions, medications, allergies"
-        detail={draftForm.medical_history.source_note || 'This section has not been filled out yet.'}
-        status={sectionStatus.medical_history}
-        expanded={expandedSection === 'medical_history'}
-        onPress={() => toggle('medical_history')}
-      >
-        {editingEnabled ? (
-          <>
-            <EditableField label="Allergies" value={draftForm.medical_history.allergies} multiline onChangeText={(value) => updateSectionField('medical_history', 'allergies', value)} />
-            <EditableField label="Current medications" value={draftForm.medical_history.current_medications} multiline onChangeText={(value) => updateSectionField('medical_history', 'current_medications', value)} />
-            <EditableField label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} multiline onChangeText={(value) => updateSectionField('medical_history', 'past_surgeries_or_hospitalizations', value)} />
-            <EditableField label="Family history" value={draftForm.medical_history.family_history} multiline onChangeText={(value) => updateSectionField('medical_history', 'family_history', value)} />
-          </>
-        ) : (
-          <>
-            <DetailLine label="Allergies" value={draftForm.medical_history.allergies} />
-            <DetailLine label="Current medications" value={draftForm.medical_history.current_medications} />
-            <DetailLine label="Past hospitalizations" value={draftForm.medical_history.past_surgeries_or_hospitalizations} />
-            <DetailLine label="Family history" value={draftForm.medical_history.family_history} />
-          </>
-        )}
-      </SectionCard>
+        <SectionCard
+          icon="pulse-outline"
+          title={visitSectionTitle}
+          subtitle={visitSectionSubtitle}
+          detail={visitDetailText}
+          status={sectionStatus.visit_details}
+          expanded={expandedSection === 'visit_details'}
+          onPress={() => toggle('visit_details')}
+        >
+          {editingEnabled ? (
+            <>
+              <EditableField label="Section title" value={draftForm.visit_context.section_title} onChangeText={(value) => updateSectionField('visit_context', 'section_title', value)} />
+              <EditableField label="Section subtitle" value={draftForm.visit_context.section_subtitle} onChangeText={(value) => updateSectionField('visit_context', 'section_subtitle', value)} />
+              <EditableField label="Visit category" value={draftForm.visit_context.visit_category} onChangeText={(value) => updateSectionField('visit_context', 'visit_category', value)} />
+              <EditableField label="Chief concern" value={draftForm.visit_context.chief_concern} multiline onChangeText={(value) => updateSectionField('visit_context', 'chief_concern', value)} />
+              <EditableField label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} multiline onChangeText={(value) => updateSectionField('visit_context', 'summary_for_clinician', value)} />
 
-      <SectionCard
-        icon="pulse-outline"
-        title={visitSectionTitle}
-        subtitle={visitSectionSubtitle}
-        detail={visitDetailText}
-        status={sectionStatus.visit_details}
-        expanded={expandedSection === 'visit_details'}
-        onPress={() => toggle('visit_details')}
-      >
-        {editingEnabled ? (
-          <>
-            <EditableField label="Section title" value={draftForm.visit_context.section_title} onChangeText={(value) => updateSectionField('visit_context', 'section_title', value)} />
-            <EditableField label="Section subtitle" value={draftForm.visit_context.section_subtitle} onChangeText={(value) => updateSectionField('visit_context', 'section_subtitle', value)} />
-            <EditableField label="Visit category" value={draftForm.visit_context.visit_category} onChangeText={(value) => updateSectionField('visit_context', 'visit_category', value)} />
-            <EditableField label="Chief concern" value={draftForm.visit_context.chief_concern} multiline onChangeText={(value) => updateSectionField('visit_context', 'chief_concern', value)} />
-            <EditableField label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} multiline onChangeText={(value) => updateSectionField('visit_context', 'summary_for_clinician', value)} />
+              <View style={styles.dynamicHeaderRow}>
+                <Text style={styles.dynamicHeaderText}>Visit detail fields</Text>
+                <TouchableOpacity style={styles.addFieldButton} onPress={addRelevantField}>
+                  <Ionicons name="add" size={16} color="#A36A09" />
+                  <Text style={styles.addFieldText}>Add field</Text>
+                </TouchableOpacity>
+              </View>
 
-            <View style={styles.dynamicHeaderRow}>
-              <Text style={styles.dynamicHeaderText}>Visit detail fields</Text>
-              <TouchableOpacity style={styles.addFieldButton} onPress={addRelevantField}>
-                <Ionicons name="add" size={16} color="#A36A09" />
-                <Text style={styles.addFieldText}>Add field</Text>
-              </TouchableOpacity>
-            </View>
+              {draftForm.visit_context.relevant_fields.length === 0 ? (
+                <Text style={styles.emptyDynamicText}>No dynamic visit fields yet. Add details like symptom duration, pain location, or triggers.</Text>
+              ) : draftForm.visit_context.relevant_fields.map((field, index) => (
+                <RelevantVisitFieldEditor
+                  key={`${field.key}_${index}`}
+                  field={field}
+                  index={index}
+                  onChange={updateRelevantField}
+                  onRemove={removeRelevantField}
+                />
+              ))}
+            </>
+          ) : (
+            <>
+              <DetailLine label="Visit category" value={formatVisitCategory(draftForm.visit_context.visit_category)} />
+              <DetailLine label="Chief concern" value={draftForm.visit_context.chief_concern} />
+              {draftForm.visit_context.summary_for_clinician ? <DetailLine label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} /> : null}
+              {draftForm.visit_context.relevant_fields.map((field) => (
+                <DetailLine key={field.key} label={field.label} value={field.value} />
+              ))}
+            </>
+          )}
+        </SectionCard>
 
-            {draftForm.visit_context.relevant_fields.length === 0 ? (
-              <Text style={styles.emptyDynamicText}>No dynamic visit fields yet. Add details like symptom duration, pain location, or triggers.</Text>
-            ) : draftForm.visit_context.relevant_fields.map((field, index) => (
-              <RelevantVisitFieldEditor
-                key={`${field.key}_${index}`}
-                field={field}
-                index={index}
-                onChange={updateRelevantField}
-                onRemove={removeRelevantField}
-              />
-            ))}
-          </>
-        ) : (
-          <>
-            <DetailLine label="Visit category" value={formatVisitCategory(draftForm.visit_context.visit_category)} />
-            <DetailLine label="Chief concern" value={draftForm.visit_context.chief_concern} />
-            {draftForm.visit_context.summary_for_clinician ? <DetailLine label="Clinician summary" value={draftForm.visit_context.summary_for_clinician} /> : null}
-            {draftForm.visit_context.relevant_fields.map((field) => (
-              <DetailLine key={field.key} label={field.label} value={field.value} />
-            ))}
-          </>
-        )}
-      </SectionCard>
-
-      <SectionCard
-        icon="document-text-outline"
-        title="Additional concerns"
-        subtitle="Freeform notes from patient or assistant"
-        detail={draftForm.additional_concerns.ai_drafted_notes ? 'Assistant and patient notes are available.' : 'Add any extra context that did not fit the main visit section.'}
-        status={sectionStatus.additional_concerns}
-        expanded={expandedSection === 'additional_concerns'}
-        onPress={() => toggle('additional_concerns')}
-      >
-        {editingEnabled ? (
-          <>
-            <EditableField label="Patient notes" value={draftForm.additional_concerns.patient_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'patient_notes', value)} />
-            <EditableField label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'ai_drafted_notes', value)} />
-          </>
-        ) : (
-          <>
-            <DetailLine label="Patient notes" value={draftForm.additional_concerns.patient_notes} />
-            <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
-          </>
-        )}
-      </SectionCard>
-    </ScrollView>
+        <SectionCard
+          icon="document-text-outline"
+          title="Additional concerns"
+          subtitle="Freeform notes from patient or assistant"
+          detail={draftForm.additional_concerns.ai_drafted_notes ? 'Assistant and patient notes are available.' : 'Add any extra context that did not fit the main visit section.'}
+          status={sectionStatus.additional_concerns}
+          expanded={expandedSection === 'additional_concerns'}
+          onPress={() => toggle('additional_concerns')}
+        >
+          {editingEnabled ? (
+            <>
+              <EditableField label="Patient notes" value={draftForm.additional_concerns.patient_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'patient_notes', value)} />
+              <EditableField label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} multiline onChangeText={(value) => updateSectionField('additional_concerns', 'ai_drafted_notes', value)} />
+            </>
+          ) : (
+            <>
+              <DetailLine label="Patient notes" value={draftForm.additional_concerns.patient_notes} />
+              <DetailLine label="AI drafted notes" value={draftForm.additional_concerns.ai_drafted_notes} />
+            </>
+          )}
+        </SectionCard>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

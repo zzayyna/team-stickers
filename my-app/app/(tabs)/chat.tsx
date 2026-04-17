@@ -768,13 +768,14 @@ const renderItem = ({ item }: { item: Message }) => {
 
 return (
   <SafeAreaView edges={['top']} style={styles.container}>
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+    <KeyboardAvoidingView 
+      style={styles.container} 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+    >
       <View style={styles.container}>
         <View style={styles.topCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.topTitle}>AI intake assistant</Text>
-            <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
-          </View>
+          <Text style={styles.topTitle}>AI intake assistant</Text>
           <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
             <Text style={styles.reviewButtonText}>View intake</Text>
           </TouchableOpacity>
@@ -903,20 +904,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F5F0' },
   topCard: {
     marginHorizontal: 20,
-    marginTop: 20,
+    marginTop: 16,
     marginBottom: 8,
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E5DED4',
-    padding: 18,
+    padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    justifyContent: 'space-between',
   },
-  topTitle: { fontSize: 18, fontWeight: '700', color: '#232220', marginBottom: 6 },
+  topTitle: { fontSize: 16, fontWeight: '700', color: '#232220' },
   topSubtitle: { fontSize: 14, lineHeight: 22, color: '#6F6A63' },
-  reviewButton: { backgroundColor: '#F6EAD6', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  reviewButton: { backgroundColor: '#F6EAD6', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
   reviewButtonText: { color: '#A36A09', fontWeight: '700' },
   list: { flex: 1 },
   chatList: { paddingHorizontal: 20, paddingTop: 12, gap: 18 },

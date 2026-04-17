@@ -45,16 +45,19 @@ const DEFAULT_PROFILE: PatientProfile = {
 type PatientProfileContextValue = {
   profile: PatientProfile;
   updateProfile: (next: PatientProfile) => void;
+  isLoading: boolean;
+  setIsLoading: (loading: boolean) => void;
 };
 
 const PatientProfileContext = createContext<PatientProfileContextValue | undefined>(undefined);
 
 export function PatientProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<PatientProfile>(DEFAULT_PROFILE);
+  const [isLoading, setIsLoading] = useState(true);
 
   const value = useMemo(
-    () => ({ profile, updateProfile: setProfile }),
-    [profile]
+    () => ({ profile, updateProfile: setProfile, isLoading, setIsLoading }),
+    [profile, isLoading]
   );
 
   return <PatientProfileContext.Provider value={value}>{children}</PatientProfileContext.Provider>;

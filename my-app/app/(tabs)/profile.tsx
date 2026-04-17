@@ -2,6 +2,9 @@ import { Ionicons } from '@expo/vector-icons'
 import { router } from 'expo-router'
 import { useEffect, useState } from 'react'
 import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -68,7 +71,7 @@ function Field({
 }
 
 export default function Profile() {
-  const { profile, updateProfile } = usePatientProfile()
+  const { profile, updateProfile, setIsLoading } = usePatientProfile()
   const { updateFromProfile, resetAppointment } = useIntake()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -91,7 +94,10 @@ export default function Profile() {
 
       const { data: authData } = await supabase.auth.getUser()
       const user = authData.user
-      if (!user) return
+      if (!user) {
+        setIsLoading(false)
+        return
+      }
 
       const { data } = await supabase
         .from('profiles')
@@ -99,7 +105,10 @@ export default function Profile() {
         .eq('id', user.id)
         .maybeSingle()
 
-      if (!data) return
+      if (!data) {
+        setIsLoading(false)
+        return
+      }
 
       const dbProfile: PatientProfile = {
         firstName: data.first_name ?? '',
@@ -125,6 +134,7 @@ export default function Profile() {
       updateProfile(dbProfile)
       setDraft(dbProfile)
       updateFromProfile()
+      setIsLoading(false)
     } finally {
       setLoadingProfile(false)
     }
@@ -245,93 +255,95 @@ export default function Profile() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {profile.firstName[0]}
-            {profile.lastName[0]}
-          </Text>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {profile.firstName[0]}
+              {profile.lastName[0]}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>
+              {profile.firstName} {profile.lastName}
+            </Text>
+            <Text style={styles.email}>{profile.email}</Text>
+            <Text style={styles.syncNote}>
+              Saved information here autofills your next check-in.
+            </Text>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.name}>
-            {profile.firstName} {profile.lastName}
-          </Text>
-          <Text style={styles.email}>{profile.email}</Text>
-          <Text style={styles.syncNote}>
-            Saved information here autofills your next check-in.
-          </Text>
-        </View>
-      </View>
 
-      <View style={styles.actionRow}>
-        {!editing && (
-          <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
-            <Ionicons name="pencil" size={16} color="#E8820C" />
-            <Text style={styles.editBtnText}>Edit profile</Text>
+        <View style={styles.actionRow}>
+          {!editing && (
+            <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
+              <Ionicons name="pencil" size={16} color="#E8820C" />
+              <Text style={styles.editBtnText}>Edit profile</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <Section title="Patient information" note="Used to prefill identity and contact fields in check-in.">
+          <Field label="First name" field="firstName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Middle initial" field="middleInitial" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Last name" field="lastName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Date of birth" field="dob" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Phone" field="phone" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Email" field="email" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Address" field="address" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Insurance" note="Shown as autofilled from previous data during intake review.">
+          <Field label="Provider" field="insuranceProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Member ID" field="insuranceMember" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Group number" field="insuranceGroup" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Medical history" note="Used to prefill allergies, medications, and history for review.">
+          <Field label="Known allergies" field="allergies" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Current medications" field="currentMedications" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Recent hospitalizations" field="hospitalizations" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Family history" field="familyHistory" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Primary care provider" field="primaryCare" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Upcoming visit">
+          {(profile.upcomingProvider || profile.upcomingTime || profile.upcomingVisitType) ? (
+            <>
+              <Field label="Provider" field="upcomingProvider" editing={false} draft={draft} profile={profile} onChange={setField} />
+              <Field label="Time" field="upcomingTime" editing={false} draft={draft} profile={profile} onChange={setField} />
+              <Field label="Visit type" field="upcomingVisitType" editing={false} draft={draft} profile={profile} onChange={setField} />
+
+              <TouchableOpacity style={styles.cancelApptBtn} onPress={handleCancelAppointment}>
+                <Text style={styles.cancelApptText}>Cancel Appointment</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <Text style={styles.noApptText}>No upcoming appointment</Text>
+          )}
+        </Section>
+
+        {editing && (
+          <TouchableOpacity style={styles.bottomSaveBtn} onPress={save} disabled={saving}>
+            <Text style={styles.bottomSaveText}>
+              {saving ? 'Saving...' : 'Save changes'}
+            </Text>
           </TouchableOpacity>
         )}
-      </View>
 
-      <Section title="Patient information" note="Used to prefill identity and contact fields in check-in.">
-        <Field label="First name" field="firstName" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Middle initial" field="middleInitial" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Last name" field="lastName" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Date of birth" field="dob" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Phone" field="phone" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Email" field="email" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Address" field="address" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Insurance" note="Shown as autofilled from previous data during intake review.">
-        <Field label="Provider" field="insuranceProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Member ID" field="insuranceMember" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Group number" field="insuranceGroup" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Medical history" note="Used to prefill allergies, medications, and history for review.">
-        <Field label="Known allergies" field="allergies" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Current medications" field="currentMedications" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Recent hospitalizations" field="hospitalizations" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Family history" field="familyHistory" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Primary care provider" field="primaryCare" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Upcoming visit">
-        {(profile.upcomingProvider || profile.upcomingTime || profile.upcomingVisitType) ? (
-          <>
-            <Field label="Provider" field="upcomingProvider" editing={false} draft={draft} profile={profile} onChange={setField} />
-            <Field label="Time" field="upcomingTime" editing={false} draft={draft} profile={profile} onChange={setField} />
-            <Field label="Visit type" field="upcomingVisitType" editing={false} draft={draft} profile={profile} onChange={setField} />
-
-            <TouchableOpacity style={styles.cancelApptBtn} onPress={handleCancelAppointment}>
-              <Text style={styles.cancelApptText}>Cancel Appointment</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <Text style={styles.noApptText}>No upcoming appointment</Text>
-        )}
-      </Section>
-
-      {editing && (
-        <TouchableOpacity style={styles.bottomSaveBtn} onPress={save} disabled={saving}>
-          <Text style={styles.bottomSaveText}>
-            {saving ? 'Saving...' : 'Save changes'}
-          </Text>
+        <TouchableOpacity
+          style={styles.signOutButton}
+          onPress={async () => {
+            await supabase.auth.signOut()
+            router.replace('/(auth)/login')
+          }}
+        >
+          <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
+          <Text style={styles.signOutText}>Sign out</Text>
         </TouchableOpacity>
-      )}
-
-      <TouchableOpacity
-        style={styles.signOutButton}
-        onPress={async () => {
-          await supabase.auth.signOut()
-          router.replace('/(auth)/login')
-        }}
-      >
-        <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
-        <Text style={styles.signOutText}>Sign out</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 

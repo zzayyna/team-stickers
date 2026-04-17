@@ -198,7 +198,11 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
   }, [syncProfileIntoDraft]);
 
   const resetAppointment = useCallback(() => {
-    setDraftForm(emptyDraft());
+    setDraftForm((prev) => ({
+      ...prev,
+      visit_context: emptyVisitContext(),
+      additional_concerns: { patient_notes: '', ai_drafted_notes: '' },
+    }));
     setCurrentRequestedField('Main reason for visit');
     setHelperInfoState({
       plainLanguageDefinition:

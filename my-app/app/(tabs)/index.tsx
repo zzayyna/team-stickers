@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAiAssistant } from '../../context/AiAssistantContext';
-import { usePatientProfile } from '../../context/PatientProfileContext';
+import { usePatientProfile, type PatientProfile } from '../../context/PatientProfileContext';
+import { supabase } from '../../lib/supabase';
 
 type DoctorOption = {
   name: string;
@@ -46,13 +47,67 @@ function getVisitDisplay(upcomingProvider: string, upcomingTime: string, upcomin
 }
 
 export default function Home() {
-  const { isAiEnabled, enableAi, disableAi } = useAiAssistant();
-  const { profile, updateProfile } = usePatientProfile();
+  const { isAiEnabled, enableAi, disableAi, acceptPrivacy } = useAiAssistant();
+  const { profile, updateProfile, isLoading, setIsLoading } = usePatientProfile();
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
   const [selectedDoctorIndex, setSelectedDoctorIndex] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState(DOCTORS[0].slots[0]);
   const [selectedVisitType, setSelectedVisitType] = useState(DOCTORS[0].specialties[0]);
+
+  // Load profile from database on mount
+  useEffect(() => {
+    loadProfileFromDatabase();
+  }, []);
+
+  const loadProfileFromDatabase = async () => {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData.user;
+      if (!user) {
+        setIsLoading(false);
+        return;
+      }
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!data) {
+        setIsLoading(false);
+        return;
+      }
+
+      const dbProfile: PatientProfile = {
+        firstName: data.first_name ?? '',
+        middleInitial: data.middle_initial ?? '',
+        lastName: data.last_name ?? '',
+        dob: data.dob ?? '',
+        phone: data.phone ?? '',
+        email: data.email ?? '',
+        address: data.address ?? '',
+        insuranceProvider: data.insurance_provider ?? '',
+        insuranceMember: data.insurance_member ?? '',
+        insuranceGroup: data.insurance_group ?? '',
+        allergies: data.allergies ?? '',
+        currentMedications: data.current_medications ?? '',
+        hospitalizations: data.hospitalizations ?? '',
+        familyHistory: data.family_history ?? '',
+        primaryCare: data.primary_care ?? '',
+        upcomingProvider: data.upcoming_provider ?? '',
+        upcomingTime: data.upcoming_time ?? '',
+        upcomingVisitType: data.upcoming_visit_type ?? '',
+      };
+
+      updateProfile(dbProfile);
+      setIsLoading(false);
+    } catch (err) {
+      console.error('Error loading profile:', err);
+      setIsLoading(false);
+    }
+  };
 
   const selectedDoctor = DOCTORS[selectedDoctorIndex];
   const visitCard = useMemo(
@@ -94,60 +149,66 @@ export default function Home() {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.greeting}>Good morning,</Text>
-        <Text style={styles.name}>{profile.firstName} {profile.lastName}</Text>
-
-        <TouchableOpacity style={styles.apptCard} onPress={handleCheckInPress}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.apptLabel}>Upcoming visit</Text>
-            <Ionicons name="chevron-forward" size={18} color="#9A938A" />
-          </View>
-          <Text style={styles.apptDoctor}>{visitCard.title}</Text>
-          <Text style={styles.apptTime}>{visitCard.subtitle}</Text>
-          <View style={styles.checkinButton}>
-            <Text style={styles.checkinText}>
-              {profile.upcomingProvider ? (isAiEnabled ? 'Start pre-visit check-in' : 'Open manual intake') : visitCard.cta}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.preferenceCard}>
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={styles.preferenceTitle}>AI pre-visit assistant</Text>
-            <Text style={styles.preferenceSubtext}>
-              Ask one question at a time, build a draft, then review it together.
-            </Text>
-          </View>
-          <Switch
-            value={isAiEnabled}
-            onValueChange={handleAiToggle}
-            trackColor={{ false: '#D8D4CD', true: '#F4C991' }}
-            thumbColor={isAiEnabled ? '#E8820C' : '#FFFFFF'}
-          />
+      {isLoading ? (
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+          <Text style={{ color: '#6F6A63' }}>Loading profile...</Text>
         </View>
+      ) : (
+        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+          <Text style={styles.greeting}>Good morning,</Text>
+          <Text style={styles.name}>{profile.firstName} {profile.lastName}</Text>
 
-        <Text style={styles.sectionTitle}>Quick actions</Text>
-        <View style={styles.grid}>
-          <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/form')}>
-            <View style={[styles.actionIcon, { backgroundColor: '#EFF5FB' }]} />
-            <Text style={styles.actionTitle}>Review intake</Text>
-            <Text style={styles.actionSub}>Check or manually edit sections before your visit</Text>
+          <TouchableOpacity style={styles.apptCard} onPress={handleCheckInPress}>
+            <View style={styles.cardHeaderRow}>
+              <Text style={styles.apptLabel}>Upcoming visit</Text>
+              <Ionicons name="chevron-forward" size={18} color="#9A938A" />
+            </View>
+            <Text style={styles.apptDoctor}>{visitCard.title}</Text>
+            <Text style={styles.apptTime}>{visitCard.subtitle}</Text>
+            <View style={styles.checkinButton}>
+              <Text style={styles.checkinText}>
+                {profile.upcomingProvider ? (isAiEnabled ? 'Start pre-visit check-in' : 'Open manual intake') : visitCard.cta}
+              </Text>
+            </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/profile')}>
-            <View style={[styles.actionIcon, { backgroundColor: '#FAEEDA' }]} />
-            <Text style={styles.actionTitle}>Update profile</Text>
-            <Text style={styles.actionSub}>Edit saved information and insurance</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={[styles.grid, { marginTop: 10 }]}> 
-          <TouchableOpacity style={styles.actionCard} onPress={() => setScheduleModalVisible(true)}>
-            <View style={[styles.actionIcon, { backgroundColor: '#EAF7EF' }]} />
-            <Text style={styles.actionTitle}>Schedule appointment</Text>
-            <Text style={styles.actionSub}>Pick a doctor, visit type, and time for a new visit</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+
+          <View style={styles.preferenceCard}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={styles.preferenceTitle}>AI pre-visit assistant</Text>
+              <Text style={styles.preferenceSubtext}>
+                Ask one question at a time, build a draft, then review it together.
+              </Text>
+            </View>
+            <Switch
+              value={isAiEnabled}
+              onValueChange={handleAiToggle}
+              trackColor={{ false: '#D8D4CD', true: '#F4C991' }}
+              thumbColor={isAiEnabled ? '#E8820C' : '#FFFFFF'}
+            />
+          </View>
+
+          <Text style={styles.sectionTitle}>Quick actions</Text>
+          <View style={styles.grid}>
+            <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/form')}>
+              <View style={[styles.actionIcon, { backgroundColor: '#EFF5FB' }]} />
+              <Text style={styles.actionTitle}>Review intake</Text>
+              <Text style={styles.actionSub}>Check or manually edit sections before your visit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/profile')}>
+              <View style={[styles.actionIcon, { backgroundColor: '#FAEEDA' }]} />
+              <Text style={styles.actionTitle}>Update profile</Text>
+              <Text style={styles.actionSub}>Edit saved information and insurance</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.grid, { marginTop: 10 }]}>
+            <TouchableOpacity style={styles.actionCard} onPress={() => setScheduleModalVisible(true)}>
+              <View style={[styles.actionIcon, { backgroundColor: '#EAF7EF' }]} />
+              <Text style={styles.actionTitle}>Schedule appointment</Text>
+              <Text style={styles.actionSub}>Pick a doctor, visit type, and time for a new visit</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      )}
 
       <Modal visible={privacyModalVisible} transparent animationType="fade" onRequestClose={() => setPrivacyModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -159,7 +220,7 @@ export default function Home() {
             <Text style={styles.disclaimerText}>
               Some de-identified conversation data may be reviewed to improve the system, but direct personal identifiers should not be used for model training.
             </Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => { enableAi(); setPrivacyModalVisible(false); }}>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => { acceptPrivacy(); setPrivacyModalVisible(false); }}>
               <Text style={styles.primaryButtonText}>Turn on AI assistant</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => { disableAi(); setPrivacyModalVisible(false); }}>
