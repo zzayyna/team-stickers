@@ -63,9 +63,22 @@ type IntakeContextValue = {
   currentRequestedField: string;
   helperInfo: { plainLanguageDefinition: string; whyWeAreAsking: string };
   updateFromProfile: () => void;
-  resetVisitContext: () => void;
-  applyAgentDraft: (patch: { patient_information?: Partial<IntakeData['patient_information']>; insurance_information?: Partial<IntakeData['insurance_information']>; medical_history?: Partial<IntakeData['medical_history']>; visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => void;
-  updateSectionField: <S extends keyof SectionMap, F extends keyof SectionMap[S]>(section: S, field: F, value: string) => void;
+
+  resetAppointment: () => void; // ✅ ADD THIS
+
+  applyAgentDraft: (patch: {
+    patient_information?: Partial<IntakeData['patient_information']>;
+    insurance_information?: Partial<IntakeData['insurance_information']>;
+    medical_history?: Partial<IntakeData['medical_history']>;
+    visit_context?: Partial<VisitContext>;
+    additional_concerns?: Partial<IntakeData['additional_concerns']>;
+  }) => void;
+
+  updateSectionField: <S extends keyof SectionMap, F extends keyof SectionMap[S]>(
+    section: S,
+    field: F,
+    value: string
+  ) => void;
   addRelevantField: () => void;
   removeRelevantField: (index: number) => void;
   updateRelevantField: (index: number, patch: Partial<RelevantVisitField>) => void;
@@ -184,12 +197,15 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
     syncProfileIntoDraft();
   }, [syncProfileIntoDraft]);
 
-  const resetVisitContext = useCallback(() => {
-    setDraftForm((prev) => ({
-      ...prev,
-      visit_context: emptyVisitContext(),
-      additional_concerns: { patient_notes: '', ai_drafted_notes: '' },
-    }));
+  const resetAppointment = useCallback(() => {
+    setDraftForm(emptyDraft());
+    setCurrentRequestedField('Main reason for visit');
+    setHelperInfoState({
+      plainLanguageDefinition:
+        'Reason for visit means the main issue or concern that brought you in today.',
+      whyWeAreAsking:
+        'This helps the care team and intake assistant focus on the most relevant questions first.',
+    });
   }, []);
 
   const applyAgentDraft = useCallback((patch: { patient_information?: Partial<IntakeData['patient_information']>; insurance_information?: Partial<IntakeData['insurance_information']>; medical_history?: Partial<IntakeData['medical_history']>; visit_context?: Partial<VisitContext>; additional_concerns?: Partial<IntakeData['additional_concerns']> }) => {
@@ -208,17 +224,17 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
 
       const nextVisitContext = patch.visit_context
         ? normalizeVisitContext({
-            ...prev.visit_context,
-            ...patch.visit_context,
-            relevant_fields: patch.visit_context.relevant_fields ?? prev.visit_context.relevant_fields,
-          })
+          ...prev.visit_context,
+          ...patch.visit_context,
+          relevant_fields: patch.visit_context.relevant_fields ?? prev.visit_context.relevant_fields,
+        })
         : prev.visit_context;
 
       const nextAdditionalConcerns = patch.additional_concerns
         ? {
-            patient_notes: String(patch.additional_concerns.patient_notes ?? prev.additional_concerns.patient_notes),
-            ai_drafted_notes: String(patch.additional_concerns.ai_drafted_notes ?? prev.additional_concerns.ai_drafted_notes),
-          }
+          patient_notes: String(patch.additional_concerns.patient_notes ?? prev.additional_concerns.patient_notes),
+          ai_drafted_notes: String(patch.additional_concerns.ai_drafted_notes ?? prev.additional_concerns.ai_drafted_notes),
+        }
         : prev.additional_concerns;
 
       return {
@@ -309,7 +325,6 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
       currentRequestedField,
       helperInfo,
       updateFromProfile,
-      resetVisitContext,
       applyAgentDraft,
       updateSectionField,
       addRelevantField,
@@ -317,8 +332,23 @@ export function IntakeProvider({ children }: { children: React.ReactNode }) {
       updateRelevantField,
       setCurrentRequestedField,
       setHelperInfo,
+      resetAppointment,
     }),
-    [draftForm, sectionStatus, currentRequestedField, helperInfo, updateFromProfile, resetVisitContext, applyAgentDraft, updateSectionField, addRelevantField, removeRelevantField, updateRelevantField, setHelperInfo]
+    [
+      draftForm,
+      sectionStatus,
+      currentRequestedField,
+      helperInfo,
+      updateFromProfile,
+      applyAgentDraft,
+      updateSectionField,
+      addRelevantField,
+      removeRelevantField,
+      updateRelevantField,
+      setCurrentRequestedField,
+      setHelperInfo,
+      resetAppointment,
+    ]
   );
 
   return <IntakeContext.Provider value={value}>{children}</IntakeContext.Provider>;
@@ -329,3 +359,5 @@ export function useIntake() {
   if (!context) throw new Error('useIntake must be used inside IntakeProvider');
   return context;
 }
+
+

@@ -154,7 +154,7 @@ function normalizeRelevantFields(fields: any): RelevantVisitField[] {
       key: String(field?.key || `field_${index + 1}`),
       label: String(field?.label || `Detail ${index + 1}`),
       value: String(field?.value || ''),
-      source: field?.source === 'patient' ? 'patient' : 'ai_summary',
+      source: (field?.source === 'patient' ? 'patient' : 'ai_summary') as 'patient' | 'ai_summary',
     }))
     .filter((field) => field.label.trim() || field.value.trim());
 }
@@ -416,463 +416,487 @@ export default function ChatTab() {
     setCurrentRequestedField,
     helperInfo,
     setHelperInfo,
-    resetVisitContext,
+    resetAppointment,
   } = useIntake();
 
-  const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || process.env.EXPO_PUBLIC_API_KEY || '';
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL;
-
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [infoVisible, setInfoVisible] = useState(false);
-  const [activeInfo, setActiveInfo] = useState(DEFAULT_HELPER);
-  const [dockHeight, setDockHeight] = useState(96);
-  const [inputHeight, setInputHeight] = useState(22);
-  const [activeSection, setActiveSection] = useState<AgentSection>('visit_context');
-  const [completionOfferSection, setCompletionOfferSection] = useState<Exclude<AgentSection, 'visit_context'> | null>(null);
-
-  const listRef = useRef<FlatList<Message>>(null);
-  const inputRef = useRef<TextInput>(null);
-  const initialTurnRequestedRef = useRef(false);
-
-  const scrollToLatest = (animated = true) => {
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
-  };
-
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const showSub = Keyboard.addListener(showEvent, () => {
-      setTimeout(() => scrollToLatest(true), 90);
-    });
-    return () => showSub.remove();
-  }, []);
-
-  useEffect(() => {
-    if (!isAiEnabled) {
-      initialTurnRequestedRef.current = false;
-      setMessages([]);
-      setInputText('');
-      setInputHeight(22);
-      setCurrentRequestedField('Main reason for visit');
-      setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
-      setActiveSection('visit_context');
-      setCompletionOfferSection(null);
-      resetVisitContext();
-      return;
-    }
-
-    if (!hasAcceptedPrivacy) {
-      initialTurnRequestedRef.current = false;
-      setMessages([]);
-      setInputText('');
-      setInputHeight(22);
-      setCurrentRequestedField('Main reason for visit');
-      setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
-      setActiveSection('visit_context');
-      setCompletionOfferSection(null);
-      resetVisitContext();
-    }
-  }, [hasAcceptedPrivacy, isAiEnabled, resetVisitContext, setCurrentRequestedField, setHelperInfo]);
-
-  const runAgentTurn = async (conversation: Message[], isInitialTurn: boolean, sectionOverride?: AgentSection) => {
-    if (!apiKey) {
-      throw new Error('Gemini API key not found. Add EXPO_PUBLIC_GEMINI_API_KEY or EXPO_PUBLIC_API_KEY to your Expo env.');
-    }
-
-    const workingSection = sectionOverride || activeSection;
-
-    const agent = await requestGeminiAgent({
-      apiKey,
-      apiUrl,
-      profile,
-      draftForm,
-      conversation,
-      isInitialTurn,
-      activeSection: workingSection,
-    });
-
-    const patientPatch = compactPatch(agent.patient_information);
-    const insurancePatch = compactPatch(agent.insurance_information);
-    const historyPatch = compactPatch(agent.medical_history);
-    const additionalConcernsPatch = compactPatch(agent.additional_concerns);
-
-    applyAgentDraft({
-      patient_information: patientPatch,
-      insurance_information: insurancePatch,
-      medical_history: historyPatch,
-      visit_context: agent.visit_context,
-      additional_concerns: additionalConcernsPatch,
-    });
-    setCurrentRequestedField(agent.current_focus_label);
-    setHelperInfo(agent.plain_language_definition, agent.why_we_are_asking);
-
-    const aiMessage: Message = {
-      id: makeId('ai'),
-      sender: 'ai',
-      text: agent.display_message,
-      plainLanguageDefinition: agent.plain_language_definition,
-      whyWeAreAsking: agent.why_we_are_asking,
-    };
-
-    const nextConversation = [...conversation, aiMessage];
-    setMessages(nextConversation);
-
-    if (agent.mode === 'form_review') {
-      const mergedDraft = {
-        ...draftForm,
-        patient_information: { ...draftForm.patient_information, ...patientPatch },
-        insurance_information: { ...draftForm.insurance_information, ...insurancePatch },
-        medical_history: { ...draftForm.medical_history, ...historyPatch },
-        visit_context: agent.visit_context ? { ...draftForm.visit_context, ...agent.visit_context } : draftForm.visit_context,
-        additional_concerns: { ...draftForm.additional_concerns, ...additionalConcernsPatch },
-      };
-
-      if (workingSection === 'visit_context') {
-        const missingSections = getMissingSections(mergedDraft);
-        if (missingSections.length > 0) {
-          const nextSection = missingSections[0];
-          setCompletionOfferSection(nextSection);
-          setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
-          const offerMessage: Message = {
-            id: makeId('ai-offer'),
-            sender: 'ai',
-            text: buildCompletionOffer(nextSection),
-            plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
-            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
-          };
-          setMessages([...nextConversation, offerMessage]);
-          setTimeout(() => scrollToLatest(true), 120);
-          return;
-        }
-      } else {
-        const missingSections = getMissingSections(mergedDraft).filter((section) => section !== workingSection);
-        if (missingSections.length > 0) {
-          const nextSection = missingSections[0];
-          setCompletionOfferSection(nextSection);
-          setActiveSection('visit_context');
-          setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
-          const offerMessage: Message = {
-            id: makeId('ai-offer'),
-            sender: 'ai',
-            text: buildCompletionOffer(nextSection),
-            plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
-            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
-          };
-          setMessages([...nextConversation, offerMessage]);
-          setTimeout(() => scrollToLatest(true), 120);
-          return;
-        }
-
-        setCompletionOfferSection(null);
-        setActiveSection('visit_context');
-        const doneMessage: Message = {
-          id: makeId('ai-done'),
-          sender: 'ai',
-          text: 'Thanks. Your intake draft looks complete now and is ready for review.',
-          plainLanguageDefinition: 'Your intake form now has information in the main sections needed for review.',
-          whyWeAreAsking: 'A more complete draft helps the clinician review your visit faster.',
-        };
-        setMessages([...nextConversation, doneMessage]);
-        setTimeout(() => scrollToLatest(true), 120);
-        return;
-      }
-    }
-
-    setTimeout(() => scrollToLatest(true), 120);
-  };
-
-  useEffect(() => {
-    if (!hasAcceptedPrivacy || !isAiEnabled || initialTurnRequestedRef.current) {
-      return;
-    }
-
-    initialTurnRequestedRef.current = true;
-    setIsLoading(true);
-    runAgentTurn([], true)
-      .catch((error) => {
-        setMessages([
-          {
-            id: makeId('ai-error'),
-            sender: 'ai',
-            text: `I couldn't start the assistant right now. ${error instanceof Error ? error.message : 'Please try again.'}`,
-            plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
-            whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
-          },
-        ]);
-      })
-      .finally(() => setIsLoading(false));
-  }, [hasAcceptedPrivacy, isAiEnabled]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => scrollToLatest(false), 60);
-    return () => clearTimeout(timer);
-  }, [messages, dockHeight, isLoading]);
-
-  const startConversation = () => {
-    acceptPrivacy();
-  };
-
-  const openInfoForMessage = (item: Message) => {
-    setActiveInfo({
-      plainLanguageDefinition: item.plainLanguageDefinition || helperInfo.plainLanguageDefinition,
-      whyWeAreAsking: item.whyWeAreAsking || helperInfo.whyWeAreAsking,
-    });
-    setInfoVisible(true);
-  };
-
-  const submitReply = async () => {
-    const userText = inputText.trim();
-    if (!userText || isLoading) return;
-
-    const nextConversation: Message[] = [...messages, { id: makeId('user'), sender: 'user', text: userText }];
-    setMessages(nextConversation);
+  const resetChatState = () => {
+    setMessages([]);
     setInputText('');
     setInputHeight(22);
-    Keyboard.dismiss();
-    inputRef.current?.blur();
+    setActiveSection('visit_context');
+    setCompletionOfferSection(null);
+    setIsLoading(false);
+    initialTurnRequestedRef.current = false;
 
-    if (completionOfferSection) {
-      if (isYesResponse(userText)) {
-        setCompletionOfferSection(null);
-        setActiveSection(completionOfferSection);
-        setIsLoading(true);
-        try {
-          await runAgentTurn(nextConversation, true, completionOfferSection);
-        } catch (error) {
-          setMessages([
-            ...nextConversation,
-            {
-              id: makeId('ai-error'),
-              sender: 'ai',
-              text: `I had trouble updating that section. ${error instanceof Error ? error.message : 'Please try again.'}`,
-              plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
-              whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
-            },
-          ]);
-        } finally {
-          setIsLoading(false);
-          setTimeout(() => scrollToLatest(true), 120);
-        }
+    resetAppointment();
+  };
+
+  useEffect(() => {
+    const handler = () => resetChatState();
+
+    // @ts-ignore
+    globalThis.__RESET_CHAT__ = handler;
+
+    return () => {
+      // @ts-ignore
+      delete globalThis.__RESET_CHAT__;
+    };
+  }, []);
+
+  const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || process.env.EXPO_PUBLIC_API_KEY || '';
+const apiUrl = process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL;
+
+const [messages, setMessages] = useState<Message[]>([]);
+const [inputText, setInputText] = useState('');
+const [isLoading, setIsLoading] = useState(false);
+const [infoVisible, setInfoVisible] = useState(false);
+const [activeInfo, setActiveInfo] = useState(DEFAULT_HELPER);
+const [dockHeight, setDockHeight] = useState(96);
+const [inputHeight, setInputHeight] = useState(22);
+const [activeSection, setActiveSection] = useState<AgentSection>('visit_context');
+const [completionOfferSection, setCompletionOfferSection] = useState<Exclude<AgentSection, 'visit_context'> | null>(null);
+
+const listRef = useRef<FlatList<Message>>(null);
+const inputRef = useRef<TextInput>(null);
+const initialTurnRequestedRef = useRef(false);
+
+const scrollToLatest = (animated = true) => {
+  requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
+};
+
+useEffect(() => {
+  const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+  const showSub = Keyboard.addListener(showEvent, () => {
+    setTimeout(() => scrollToLatest(true), 90);
+  });
+  return () => showSub.remove();
+}, []);
+
+useEffect(() => {
+  if (!isAiEnabled) {
+    initialTurnRequestedRef.current = false;
+    setMessages([]);
+    setInputText('');
+    setInputHeight(22);
+    setCurrentRequestedField('Main reason for visit');
+    setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+    setActiveSection('visit_context');
+    setCompletionOfferSection(null);
+    resetAppointment();
+    return;
+  }
+
+  if (!hasAcceptedPrivacy) {
+    initialTurnRequestedRef.current = false;
+    setMessages([]);
+    setInputText('');
+    setInputHeight(22);
+    setCurrentRequestedField('Main reason for visit');
+    setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
+    setActiveSection('visit_context');
+    setCompletionOfferSection(null);
+    resetAppointment();
+  }
+}, [hasAcceptedPrivacy, isAiEnabled, resetAppointment, setCurrentRequestedField, setHelperInfo]);
+
+const runAgentTurn = async (conversation: Message[], isInitialTurn: boolean, sectionOverride?: AgentSection) => {
+  if (!apiKey) {
+    throw new Error('Gemini API key not found. Add EXPO_PUBLIC_GEMINI_API_KEY or EXPO_PUBLIC_API_KEY to your Expo env.');
+  }
+
+  const workingSection = sectionOverride || activeSection;
+
+  const agent = await requestGeminiAgent({
+    apiKey,
+    apiUrl,
+    profile,
+    draftForm,
+    conversation,
+    isInitialTurn,
+    activeSection: workingSection,
+  });
+
+  const patientPatch = compactPatch(agent.patient_information);
+  const insurancePatch = compactPatch(agent.insurance_information);
+  const historyPatch = compactPatch(agent.medical_history);
+  const additionalConcernsPatch = compactPatch(agent.additional_concerns);
+
+  applyAgentDraft({
+    patient_information: patientPatch,
+    insurance_information: insurancePatch,
+    medical_history: historyPatch,
+    visit_context: agent.visit_context,
+    additional_concerns: additionalConcernsPatch,
+  });
+  setCurrentRequestedField(agent.current_focus_label);
+  setHelperInfo(agent.plain_language_definition, agent.why_we_are_asking);
+
+  const aiMessage: Message = {
+    id: makeId('ai'),
+    sender: 'ai',
+    text: agent.display_message,
+    plainLanguageDefinition: agent.plain_language_definition,
+    whyWeAreAsking: agent.why_we_are_asking,
+  };
+
+  const nextConversation = [...conversation, aiMessage];
+  setMessages(nextConversation);
+
+  if (agent.mode === 'form_review') {
+    const mergedDraft = {
+      ...draftForm,
+      patient_information: { ...draftForm.patient_information, ...patientPatch },
+      insurance_information: { ...draftForm.insurance_information, ...insurancePatch },
+      medical_history: { ...draftForm.medical_history, ...historyPatch },
+      visit_context: agent.visit_context ? { ...draftForm.visit_context, ...agent.visit_context } : draftForm.visit_context,
+      additional_concerns: { ...draftForm.additional_concerns, ...additionalConcernsPatch },
+    };
+
+    if (workingSection === 'visit_context') {
+      const missingSections = getMissingSections(mergedDraft);
+      if (missingSections.length > 0) {
+        const nextSection = missingSections[0];
+        setCompletionOfferSection(nextSection);
+        setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
+        const offerMessage: Message = {
+          id: makeId('ai-offer'),
+          sender: 'ai',
+          text: buildCompletionOffer(nextSection),
+          plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
+          whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+        };
+        setMessages([...nextConversation, offerMessage]);
+        setTimeout(() => scrollToLatest(true), 120);
         return;
       }
-
-      if (isNoResponse(userText)) {
-        const remainingSections = getMissingSections(draftForm).filter((section) => section !== completionOfferSection);
-        if (remainingSections.length > 0) {
-          const nextSection = remainingSections[0];
-          setCompletionOfferSection(nextSection);
-          const offerMessage: Message = {
-            id: makeId('ai-offer'),
-            sender: 'ai',
-            text: buildCompletionOffer(nextSection),
-            plainLanguageDefinition: 'This means another part of your intake form still has blank fields.',
-            whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
-          };
-          setMessages([...nextConversation, offerMessage]);
-        } else {
-          setCompletionOfferSection(null);
-          const doneMessage: Message = {
-            id: makeId('ai-done'),
-            sender: 'ai',
-            text: 'Understood. There are no other incomplete sections I need to ask about right now.',
-            plainLanguageDefinition: 'You chose not to fill the remaining section right now.',
-            whyWeAreAsking: 'The care team can still review what you already completed.',
-          };
-          setMessages([...nextConversation, doneMessage]);
-        }
+    } else {
+      const missingSections = getMissingSections(mergedDraft).filter((section) => section !== workingSection);
+      if (missingSections.length > 0) {
+        const nextSection = missingSections[0];
+        setCompletionOfferSection(nextSection);
+        setActiveSection('visit_context');
+        setCurrentRequestedField(COMPLETION_SECTION_LABELS[nextSection]);
+        const offerMessage: Message = {
+          id: makeId('ai-offer'),
+          sender: 'ai',
+          text: buildCompletionOffer(nextSection),
+          plainLanguageDefinition: 'This means part of your intake form still has blank fields.',
+          whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+        };
+        setMessages([...nextConversation, offerMessage]);
         setTimeout(() => scrollToLatest(true), 120);
         return;
       }
 
-      const clarifyMessage: Message = {
-        id: makeId('ai-offer-clarify'),
+      setCompletionOfferSection(null);
+      setActiveSection('visit_context');
+      const doneMessage: Message = {
+        id: makeId('ai-done'),
         sender: 'ai',
-        text: 'Please reply yes or no so I know whether to help with that section next.',
-        plainLanguageDefinition: 'I am checking whether you want help filling the incomplete section.',
-        whyWeAreAsking: 'This keeps the intake flow moving one section at a time.',
+        text: 'Thanks. Your intake draft looks complete now and is ready for review.',
+        plainLanguageDefinition: 'Your intake form now has information in the main sections needed for review.',
+        whyWeAreAsking: 'A more complete draft helps the clinician review your visit faster.',
       };
-      setMessages([...nextConversation, clarifyMessage]);
+      setMessages([...nextConversation, doneMessage]);
       setTimeout(() => scrollToLatest(true), 120);
       return;
     }
+  }
 
-    setIsLoading(true);
+  setTimeout(() => scrollToLatest(true), 120);
+};
 
-    try {
-      await runAgentTurn(nextConversation, false);
-    } catch (error) {
+useEffect(() => {
+  if (!hasAcceptedPrivacy || !isAiEnabled || initialTurnRequestedRef.current) {
+    return;
+  }
+
+  initialTurnRequestedRef.current = true;
+  setIsLoading(true);
+  runAgentTurn([], true)
+    .catch((error) => {
       setMessages([
-        ...nextConversation,
         {
           id: makeId('ai-error'),
           sender: 'ai',
-          text: `I had trouble updating the visit draft. ${error instanceof Error ? error.message : 'Please try again.'}`,
+          text: `I couldn't start the assistant right now. ${error instanceof Error ? error.message : 'Please try again.'}`,
           plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
           whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
         },
       ]);
-    } finally {
-      setIsLoading(false);
-      setTimeout(() => scrollToLatest(true), 120);
+    })
+    .finally(() => setIsLoading(false));
+}, [hasAcceptedPrivacy, isAiEnabled]);
+
+useEffect(() => {
+  const timer = setTimeout(() => scrollToLatest(false), 60);
+  return () => clearTimeout(timer);
+}, [messages, dockHeight, isLoading]);
+
+const startConversation = () => {
+  acceptPrivacy();
+};
+
+const openInfoForMessage = (item: Message) => {
+  setActiveInfo({
+    plainLanguageDefinition: item.plainLanguageDefinition || helperInfo.plainLanguageDefinition,
+    whyWeAreAsking: item.whyWeAreAsking || helperInfo.whyWeAreAsking,
+  });
+  setInfoVisible(true);
+};
+
+const submitReply = async () => {
+  const userText = inputText.trim();
+  if (!userText || isLoading) return;
+
+  const nextConversation: Message[] = [...messages, { id: makeId('user'), sender: 'user', text: userText }];
+  setMessages(nextConversation);
+  setInputText('');
+  setInputHeight(22);
+  Keyboard.dismiss();
+  inputRef.current?.blur();
+
+  if (completionOfferSection) {
+    if (isYesResponse(userText)) {
+      setCompletionOfferSection(null);
+      setActiveSection(completionOfferSection);
+      setIsLoading(true);
+      try {
+        await runAgentTurn(nextConversation, true, completionOfferSection);
+      } catch (error) {
+        setMessages([
+          ...nextConversation,
+          {
+            id: makeId('ai-error'),
+            sender: 'ai',
+            text: `I had trouble updating that section. ${error instanceof Error ? error.message : 'Please try again.'}`,
+            plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
+            whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
+          },
+        ]);
+      } finally {
+        setIsLoading(false);
+        setTimeout(() => scrollToLatest(true), 120);
+      }
+      return;
     }
-  };
 
-  const renderItem = ({ item }: { item: Message }) => {
-    const isAi = item.sender === 'ai';
+    if (isNoResponse(userText)) {
+      const remainingSections = getMissingSections(draftForm).filter((section) => section !== completionOfferSection);
+      if (remainingSections.length > 0) {
+        const nextSection = remainingSections[0];
+        setCompletionOfferSection(nextSection);
+        const offerMessage: Message = {
+          id: makeId('ai-offer'),
+          sender: 'ai',
+          text: buildCompletionOffer(nextSection),
+          plainLanguageDefinition: 'This means another part of your intake form still has blank fields.',
+          whyWeAreAsking: 'Completing the remaining sections helps the clinic review a more complete intake form before the visit.',
+        };
+        setMessages([...nextConversation, offerMessage]);
+      } else {
+        setCompletionOfferSection(null);
+        const doneMessage: Message = {
+          id: makeId('ai-done'),
+          sender: 'ai',
+          text: 'Understood. There are no other incomplete sections I need to ask about right now.',
+          plainLanguageDefinition: 'You chose not to fill the remaining section right now.',
+          whyWeAreAsking: 'The care team can still review what you already completed.',
+        };
+        setMessages([...nextConversation, doneMessage]);
+      }
+      setTimeout(() => scrollToLatest(true), 120);
+      return;
+    }
 
-    return (
-      <View style={[styles.messageRow, isAi ? styles.aiRow : styles.userRow]}>
-        {isAi ? (
-          <View style={styles.aiAvatar}>
-            <Ionicons name="sparkles" size={16} color="#E8820C" />
-          </View>
-        ) : null}
-        <View style={styles.messageContent} pointerEvents="box-none">
-          <View pointerEvents="none" style={[styles.bubble, isAi ? styles.aiBubble : styles.userBubble]}>
-            <Text style={[styles.messageText, isAi ? styles.aiText : styles.userText]}>{item.text}</Text>
-          </View>
-        </View>
-        {isAi ? (
-          <TouchableOpacity style={styles.inlineInfoButton} onPress={() => openInfoForMessage(item)}>
-            <Ionicons name="information-circle-outline" size={26} color="#8A8175" />
-          </TouchableOpacity>
-        ) : null}
-      </View>
-    );
-  };
+    const clarifyMessage: Message = {
+      id: makeId('ai-offer-clarify'),
+      sender: 'ai',
+      text: 'Please reply yes or no so I know whether to help with that section next.',
+      plainLanguageDefinition: 'I am checking whether you want help filling the incomplete section.',
+      whyWeAreAsking: 'This keeps the intake flow moving one section at a time.',
+    };
+    setMessages([...nextConversation, clarifyMessage]);
+    setTimeout(() => scrollToLatest(true), 120);
+    return;
+  }
+
+  setIsLoading(true);
+
+  try {
+    await runAgentTurn(nextConversation, false);
+  } catch (error) {
+    setMessages([
+      ...nextConversation,
+      {
+        id: makeId('ai-error'),
+        sender: 'ai',
+        text: `I had trouble updating the visit draft. ${error instanceof Error ? error.message : 'Please try again.'}`,
+        plainLanguageDefinition: DEFAULT_HELPER.plainLanguageDefinition,
+        whyWeAreAsking: DEFAULT_HELPER.whyWeAreAsking,
+      },
+    ]);
+  } finally {
+    setIsLoading(false);
+    setTimeout(() => scrollToLatest(true), 120);
+  }
+};
+
+const renderItem = ({ item }: { item: Message }) => {
+  const isAi = item.sender === 'ai';
 
   return (
-    <SafeAreaView edges={['top']} style={styles.container}>
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <View style={styles.container}>
-          <View style={styles.topCard}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.topTitle}>AI intake assistant</Text>
-              <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
-            </View>
-            <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
-              <Text style={styles.reviewButtonText}>View intake</Text>
-            </TouchableOpacity>
+    <View style={[styles.messageRow, isAi ? styles.aiRow : styles.userRow]}>
+      {isAi ? (
+        <View style={styles.aiAvatar}>
+          <Ionicons name="sparkles" size={16} color="#E8820C" />
+        </View>
+      ) : null}
+      <View style={styles.messageContent} pointerEvents="box-none">
+        <View pointerEvents="none" style={[styles.bubble, isAi ? styles.aiBubble : styles.userBubble]}>
+          <Text style={[styles.messageText, isAi ? styles.aiText : styles.userText]}>{item.text}</Text>
+        </View>
+      </View>
+      {isAi ? (
+        <TouchableOpacity style={styles.inlineInfoButton} onPress={() => openInfoForMessage(item)}>
+          <Ionicons name="information-circle-outline" size={26} color="#8A8175" />
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+};
+
+return (
+  <SafeAreaView edges={['top']} style={styles.container}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <View style={styles.container}>
+        <View style={styles.topCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.topTitle}>AI intake assistant</Text>
+            <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
           </View>
+          <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
+            <Text style={styles.reviewButtonText}>View intake</Text>
+          </TouchableOpacity>
+        </View>
 
-          <FlatList
-            ref={listRef}
-            data={messages}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.id}
-            style={styles.list}
-            contentContainerStyle={[styles.chatList, { paddingBottom: dockHeight + Math.max(insets.bottom, 12) + 18 }]}
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => scrollToLatest(false)}
-            onScrollBeginDrag={() => Keyboard.dismiss()}
-            ListFooterComponent={
-              isLoading ? (
-                <View style={[styles.messageRow, styles.aiRow]}>
-                  <View style={styles.aiAvatar}>
-                    <Ionicons name="sparkles" size={16} color="#E8820C" />
-                  </View>
+        <FlatList
+          ref={listRef}
+          data={messages}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          contentContainerStyle={[styles.chatList, { paddingBottom: dockHeight + Math.max(insets.bottom, 12) + 18 }]}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => scrollToLatest(false)}
+          onScrollBeginDrag={() => Keyboard.dismiss()}
+          ListFooterComponent={
+            isLoading ? (
+              <View style={[styles.messageRow, styles.aiRow]}>
+                <View style={styles.aiAvatar}>
+                  <Ionicons name="sparkles" size={16} color="#E8820C" />
+                </View>
 
-                  <View style={styles.messageContent}>
-                    <View style={[styles.bubble, styles.aiBubble, styles.thinkingBubble]}>
-                      <ActivityIndicator size="small" color="#E8820C" />
-                      <Text style={styles.thinkingText}>Assistant is thinking...</Text>
-                    </View>
+                <View style={styles.messageContent}>
+                  <View style={[styles.bubble, styles.aiBubble, styles.thinkingBubble]}>
+                    <ActivityIndicator size="small" color="#E8820C" />
+                    <Text style={styles.thinkingText}>Assistant is thinking...</Text>
                   </View>
                 </View>
-              ) : null
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>{isAiEnabled ? 'Pre-visit check-in' : 'AI check-in is off'}</Text>
-                <Text style={styles.emptyText}>
-                  {isAiEnabled ? 'Review the privacy note before starting.' : 'AI is off. You can still complete your intake manually.'}
-                </Text>
-                {!isAiEnabled ? (
-                  <TouchableOpacity style={styles.manualButton} onPress={() => router.push('/form')}>
-                    <Text style={styles.manualButtonText}>Open intake review</Text>
-                  </TouchableOpacity>
-                ) : null}
               </View>
-            }
-          />
-
-          {hasAcceptedPrivacy && isAiEnabled && messages.length > 0 ? (
-            <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 10) }]} onLayout={(e) => setDockHeight(e.nativeEvent.layout.height)}>
-              <View style={styles.helperChip}>
-                <Text style={styles.helperLabel}>Currently asking</Text>
-                <Text style={styles.helperValue} numberOfLines={1}>{currentRequestedField}</Text>
-              </View>
-
-              <View style={styles.inputBar}>
-                <TouchableOpacity style={styles.sideAction} disabled>
-                  <Ionicons name="image-outline" size={22} color="#9E958A" />
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>{isAiEnabled ? 'Pre-visit check-in' : 'AI check-in is off'}</Text>
+              <Text style={styles.emptyText}>
+                {isAiEnabled ? 'Review the privacy note before starting.' : 'AI is off. You can still complete your intake manually.'}
+              </Text>
+              {!isAiEnabled ? (
+                <TouchableOpacity style={styles.manualButton} onPress={() => router.push('/form')}>
+                  <Text style={styles.manualButtonText}>Open intake review</Text>
                 </TouchableOpacity>
-                <TextInput
-                  ref={inputRef}
-                  style={[styles.input, { height: Math.min(Math.max(inputHeight, 22), 68) }]}
-                  placeholder={isLoading ? 'Assistant is thinking…' : 'Type your answer'}
-                  placeholderTextColor="#A59D93"
-                  value={inputText}
-                  onChangeText={setInputText}
-                  editable={!isLoading}
-                  multiline
-                  textAlignVertical="center"
-                  onFocus={() => setTimeout(() => scrollToLatest(true), 140)}
-                  onContentSizeChange={(event) => setInputHeight(event.nativeEvent.contentSize.height)}
-                  blurOnSubmit={false}
-                  returnKeyType="send"
-                />
-                <TouchableOpacity style={styles.sideAction} disabled>
-                  <Ionicons name="mic-outline" size={22} color="#9E958A" />
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.sendButton, !(inputText.trim() && !isLoading) && styles.sendButtonDisabled]} onPress={submitReply} disabled={isLoading || !inputText.trim()}>
-                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
-                </TouchableOpacity>
-              </View>
+              ) : null}
             </View>
-          ) : null}
-        </View>
-      </KeyboardAvoidingView>
+          }
+        />
 
-      <Modal visible={isAiEnabled && !hasAcceptedPrivacy} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Before you start</Text>
-            <Text style={styles.modalText}>This AI assistant helps organize your pre-visit intake. Personal medical details should remain inside this care experience.</Text>
-            <Text style={styles.modalText}>De-identified conversation data may be reviewed to improve the system, but direct personal identifiers should not be used for model training.</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={startConversation}>
-              <Text style={styles.primaryButtonText}>Continue with AI</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => {
-                disableAi();
-                router.push('/form');
-              }}
-            >
-              <Text style={styles.secondaryButtonText}>Fill out intake manually</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        {hasAcceptedPrivacy && isAiEnabled && messages.length > 0 ? (
+          <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 10) }]} onLayout={(e) => setDockHeight(e.nativeEvent.layout.height)}>
+            <View style={styles.helperChip}>
+              <Text style={styles.helperLabel}>Currently asking</Text>
+              <Text style={styles.helperValue} numberOfLines={1}>{currentRequestedField}</Text>
+            </View>
 
-      <Modal visible={infoVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.infoModalCard}>
-            <Text style={styles.infoHeading}>What this means</Text>
-            <Text style={styles.infoBody}>{activeInfo.plainLanguageDefinition}</Text>
-            <Text style={[styles.infoHeading, { marginTop: 14 }]}>Why we are asking</Text>
-            <Text style={styles.infoBody}>{activeInfo.whyWeAreAsking}</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => setInfoVisible(false)}>
-              <Text style={styles.primaryButtonText}>Got it</Text>
-            </TouchableOpacity>
+            <View style={styles.inputBar}>
+              <TouchableOpacity style={styles.sideAction} disabled>
+                <Ionicons name="image-outline" size={22} color="#9E958A" />
+              </TouchableOpacity>
+              <TextInput
+                ref={inputRef}
+                style={[styles.input, { height: Math.min(Math.max(inputHeight, 22), 68) }]}
+                placeholder={isLoading ? 'Assistant is thinking…' : 'Type your answer'}
+                placeholderTextColor="#A59D93"
+                value={inputText}
+                onChangeText={setInputText}
+                editable={!isLoading}
+                multiline
+                textAlignVertical="center"
+                onFocus={() => setTimeout(() => scrollToLatest(true), 140)}
+                onContentSizeChange={(event) => setInputHeight(event.nativeEvent.contentSize.height)}
+                blurOnSubmit={false}
+                returnKeyType="send"
+              />
+              <TouchableOpacity style={styles.sideAction} disabled>
+                <Ionicons name="mic-outline" size={22} color="#9E958A" />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.sendButton, !(inputText.trim() && !isLoading) && styles.sendButtonDisabled]} onPress={submitReply} disabled={isLoading || !inputText.trim()}>
+                {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
+              </TouchableOpacity>
+            </View>
           </View>
+        ) : null}
+      </View>
+    </KeyboardAvoidingView>
+
+    <Modal visible={isAiEnabled && !hasAcceptedPrivacy} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Before you start</Text>
+          <Text style={styles.modalText}>This AI assistant helps organize your pre-visit intake. Personal medical details should remain inside this care experience.</Text>
+          <Text style={styles.modalText}>De-identified conversation data may be reviewed to improve the system, but direct personal identifiers should not be used for model training.</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={startConversation}>
+            <Text style={styles.primaryButtonText}>Continue with AI</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => {
+              disableAi();
+              router.push('/form');
+            }}
+          >
+            <Text style={styles.secondaryButtonText}>Fill out intake manually</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
-    </SafeAreaView>
-  );
+      </View>
+    </Modal>
+
+    <Modal visible={infoVisible} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.infoModalCard}>
+          <Text style={styles.infoHeading}>What this means</Text>
+          <Text style={styles.infoBody}>{activeInfo.plainLanguageDefinition}</Text>
+          <Text style={[styles.infoHeading, { marginTop: 14 }]}>Why we are asking</Text>
+          <Text style={styles.infoBody}>{activeInfo.whyWeAreAsking}</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={() => setInfoVisible(false)}>
+            <Text style={styles.primaryButtonText}>Got it</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({

@@ -12,6 +12,7 @@ import {
 import { usePatientProfile, type PatientProfile } from '../../context/PatientProfileContext'
 import { useIntake } from '../../context/IntakeContext'
 import { supabase } from '../../lib/supabase'
+import { Alert } from 'react-native'
 
 function Section({
   title,
@@ -68,7 +69,7 @@ function Field({
 
 export default function Profile() {
   const { profile, updateProfile } = usePatientProfile()
-  const { updateFromProfile } = useIntake()
+  const { updateFromProfile, resetAppointment } = useIntake()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [draft, setDraft] = useState<PatientProfile>(profile)
@@ -88,28 +89,15 @@ export default function Profile() {
     try {
       setLoadingProfile(true)
 
-      const { data: authData, error: userError } = await supabase.auth.getUser()
-      if (userError) {
-        console.error('Error getting user:', userError)
-        return
-      }
-
+      const { data: authData } = await supabase.auth.getUser()
       const user = authData.user
-      if (!user) {
-        console.error('No authenticated user found')
-        return
-      }
+      if (!user) return
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
-
-      if (error) {
-        console.error('Error loading profile:', error)
-        return
-      }
 
       if (!data) return
 
@@ -137,8 +125,6 @@ export default function Profile() {
       updateProfile(dbProfile)
       setDraft(dbProfile)
       updateFromProfile()
-    } catch (err) {
-      console.error('Unexpected load error:', err)
     } finally {
       setLoadingProfile(false)
     }
@@ -158,23 +144,66 @@ export default function Profile() {
     setDraft((prev) => ({ ...prev, [key]: value }))
   }
 
+  const handleCancelAppointment = () => {
+    Alert.alert(
+      'Cancel Appointment',
+      'Are you sure you want to cancel this appointment?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, cancel it',
+          style: 'destructive',
+          onPress: confirmCancelAppointment,
+        },
+      ]
+    )
+  }
+
+
+  const confirmCancelAppointment = async () => {
+    try {
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
+      if (!user) return
+
+      // 🔥 Clear appointment in Supabase
+      await supabase
+        .from('profiles')
+        .update({
+          upcoming_provider: '',
+          upcoming_time: '',
+          upcoming_visit_type: '',
+        })
+        .eq('id', user.id)
+
+      // 🔥 Update local state immediately
+      const updatedProfile = {
+        ...profile,
+        upcomingProvider: '',
+        upcomingTime: '',
+        upcomingVisitType: '',
+      }
+
+      updateProfile(updatedProfile)
+      setDraft(updatedProfile)
+      updateFromProfile()
+      resetAppointment()
+      // @ts-ignore
+      globalThis.__RESET_CHAT__?.();
+    } catch (err) {
+      console.error('Cancel appointment error:', err)
+    }
+  }
+
   const save = async () => {
     try {
       setSaving(true)
 
-      const { data: authData, error: userError } = await supabase.auth.getUser()
-      if (userError) {
-        console.error('Error getting user:', userError)
-        return
-      }
-
+      const { data: authData } = await supabase.auth.getUser()
       const user = authData.user
-      if (!user) {
-        console.error('No authenticated user found')
-        return
-      }
+      if (!user) return
 
-      const { error } = await supabase.from('profiles').upsert({
+      await supabase.from('profiles').upsert({
         id: user.id,
         first_name: draft.firstName,
         middle_initial: draft.middleInitial,
@@ -197,16 +226,11 @@ export default function Profile() {
         updated_at: new Date().toISOString(),
       })
 
-      if (error) {
-        console.error('Supabase save error:', error)
-        return
-      }
-
       updateProfile(draft)
       updateFromProfile()
+      // @ts-ignore
+      globalThis.__RESET_CHAT__?.();
       setEditing(false)
-    } catch (err) {
-      console.error('Unexpected save error:', err)
     } finally {
       setSaving(false)
     }
@@ -241,22 +265,11 @@ export default function Profile() {
       </View>
 
       <View style={styles.actionRow}>
-        {!editing ? (
+        {!editing && (
           <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
             <Ionicons name="pencil" size={16} color="#E8820C" />
             <Text style={styles.editBtnText}>Edit profile</Text>
           </TouchableOpacity>
-        ) : (
-          <>
-            <TouchableOpacity onPress={cancel} style={styles.cancelBtn} disabled={saving}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={save} style={styles.saveBtn} disabled={saving}>
-              <Text style={styles.saveBtnText}>
-                {saving ? 'Saving...' : 'Save changes'}
-              </Text>
-            </TouchableOpacity>
-          </>
         )}
       </View>
 
@@ -285,22 +298,36 @@ export default function Profile() {
       </Section>
 
       <Section title="Upcoming visit">
-        <Field label="Provider" field="upcomingProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Time" field="upcomingTime" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Visit type" field="upcomingVisitType" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        {!editing && !profile.upcomingProvider ? <Text style={styles.fieldValue}>No upcoming appointment scheduled.</Text> : null}
+        {(profile.upcomingProvider || profile.upcomingTime || profile.upcomingVisitType) ? (
+          <>
+            <Field label="Provider" field="upcomingProvider" editing={false} draft={draft} profile={profile} onChange={setField} />
+            <Field label="Time" field="upcomingTime" editing={false} draft={draft} profile={profile} onChange={setField} />
+            <Field label="Visit type" field="upcomingVisitType" editing={false} draft={draft} profile={profile} onChange={setField} />
+
+            <TouchableOpacity style={styles.cancelApptBtn} onPress={handleCancelAppointment}>
+              <Text style={styles.cancelApptText}>Cancel Appointment</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <Text style={styles.noApptText}>No upcoming appointment</Text>
+        )}
       </Section>
 
-      {editing ? (
-        <TouchableOpacity onPress={save} style={[styles.saveBtn, styles.bottomSaveBtn]} disabled={saving}>
-          <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save changes'}</Text>
+      {editing && (
+        <TouchableOpacity style={styles.bottomSaveBtn} onPress={save} disabled={saving}>
+          <Text style={styles.bottomSaveText}>
+            {saving ? 'Saving...' : 'Save changes'}
+          </Text>
         </TouchableOpacity>
-      ) : null}
+      )}
 
-      <TouchableOpacity style={styles.signOutButton} onPress={ async () => { 
-          await supabase.auth.signOut(); 
+      <TouchableOpacity
+        style={styles.signOutButton}
+        onPress={async () => {
+          await supabase.auth.signOut()
           router.replace('/(auth)/login')
-        }}>
+        }}
+      >
         <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
         <Text style={styles.signOutText}>Sign out</Text>
       </TouchableOpacity>
@@ -311,6 +338,32 @@ export default function Profile() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFDF9' },
   content: { padding: 24, paddingTop: 60, paddingBottom: 40 },
+
+  bottomSaveBtn: {
+    backgroundColor: '#E8820C',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  bottomSaveText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  cancelApptBtn: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#FCEBEB',
+    alignItems: 'center',
+  },
+  cancelApptText: {
+    color: '#A32D2D',
+    fontWeight: '600',
+  },
+
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 18 },
   avatar: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#FAEEDA', alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 20, fontWeight: '700', color: '#E8820C' },
@@ -323,7 +376,6 @@ const styles = StyleSheet.create({
   cancelBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#D3D1C7' },
   cancelBtnText: { color: '#888780', fontSize: 13 },
   saveBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: '#E8820C' },
-  bottomSaveBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 14, marginTop: 8, marginBottom: 10 },
   saveBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   card: { backgroundColor: '#fff', borderRadius: 18, padding: 18, borderWidth: 1, borderColor: '#E5DED4', marginBottom: 14 },
   cardHeader: { marginBottom: 12 },
@@ -335,4 +387,9 @@ const styles = StyleSheet.create({
   fieldInput: { fontSize: 15, color: '#2C2C2A', borderWidth: 1, borderColor: '#E5DED4', borderRadius: 10, padding: 10, backgroundColor: '#FFFDF9' },
   signOutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FCEBEB', borderRadius: 12, padding: 14, marginTop: 8 },
   signOutText: { color: '#A32D2D', fontWeight: '600', fontSize: 14 },
+  noApptText: {
+    fontSize: 14,
+    color: '#888780',
+    fontStyle: 'italic',
+  },
 })
