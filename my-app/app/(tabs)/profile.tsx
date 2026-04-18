@@ -67,82 +67,18 @@ function Field({
 }
 
 export default function Profile() {
-  const { profile, updateProfile } = usePatientProfile()
+  const { profile, profileReady, refreshProfile, updateProfile } = usePatientProfile()
   const { updateFromProfile } = useIntake()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [draft, setDraft] = useState<PatientProfile>(profile)
-  const [loadingProfile, setLoadingProfile] = useState(true)
-
-  useEffect(() => {
-    loadProfileFromDatabase()
-  }, [])
+  const initials = `${profile.firstName?.[0] ?? ''}${profile.lastName?.[0] ?? ''}`
 
   useEffect(() => {
     if (!editing) {
       setDraft(profile)
     }
   }, [profile, editing])
-
-  const loadProfileFromDatabase = async () => {
-    try {
-      setLoadingProfile(true)
-
-      const { data: authData, error: userError } = await supabase.auth.getUser()
-      if (userError) {
-        console.error('Error getting user:', userError)
-        return
-      }
-
-      const user = authData.user
-      if (!user) {
-        console.error('No authenticated user found')
-        return
-      }
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      if (error) {
-        console.error('Error loading profile:', error)
-        return
-      }
-
-      if (!data) return
-
-      const dbProfile: PatientProfile = {
-        firstName: data.first_name ?? '',
-        middleInitial: data.middle_initial ?? '',
-        lastName: data.last_name ?? '',
-        dob: data.dob ?? '',
-        phone: data.phone ?? '',
-        email: data.email ?? '',
-        address: data.address ?? '',
-        insuranceProvider: data.insurance_provider ?? '',
-        insuranceMember: data.insurance_member ?? '',
-        insuranceGroup: data.insurance_group ?? '',
-        allergies: data.allergies ?? '',
-        currentMedications: data.current_medications ?? '',
-        hospitalizations: data.hospitalizations ?? '',
-        familyHistory: data.family_history ?? '',
-        primaryCare: data.primary_care ?? '',
-        upcomingProvider: data.upcoming_provider ?? '',
-        upcomingTime: data.upcoming_time ?? '',
-        upcomingVisitType: data.upcoming_visit_type ?? '',
-      }
-
-      updateProfile(dbProfile)
-      setDraft(dbProfile)
-      updateFromProfile()
-    } catch (err) {
-      console.error('Unexpected load error:', err)
-    } finally {
-      setLoadingProfile(false)
-    }
-  }
 
   const startEdit = () => {
     setDraft(profile)
@@ -203,8 +139,10 @@ export default function Profile() {
       }
 
       updateProfile(draft)
-      updateFromProfile()
+      setDraft(draft)
       setEditing(false)
+      updateFromProfile()
+      await refreshProfile()
     } catch (err) {
       console.error('Unexpected save error:', err)
     } finally {
@@ -212,7 +150,7 @@ export default function Profile() {
     }
   }
 
-  if (loadingProfile) {
+  if (!profileReady) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <Text>Loading profile...</Text>
@@ -225,8 +163,7 @@ export default function Profile() {
       <View style={styles.header}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>
-            {profile.firstName[0]}
-            {profile.lastName[0]}
+            {initials}
           </Text>
         </View>
         <View style={{ flex: 1 }}>

@@ -47,7 +47,7 @@ function getVisitDisplay(upcomingProvider: string, upcomingTime: string, upcomin
 
 export default function Home() {
   const { isAiEnabled, enableAi, disableAi } = useAiAssistant();
-  const { profile, updateProfile } = usePatientProfile();
+  const { profile, profileReady, updateProfile } = usePatientProfile();
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
   const [selectedDoctorIndex, setSelectedDoctorIndex] = useState(0);
@@ -75,6 +75,14 @@ export default function Home() {
       disableAi();
     }
   };
+
+  if (!profileReady) {
+    return (
+      <View style={[styles.container, styles.loadingWrap]}>
+        <Text style={styles.loadingText}>Loading your profile...</Text>
+      </View>
+    );
+  }
 
   const handleDoctorSelect = (index: number) => {
     setSelectedDoctorIndex(index);
@@ -229,6 +237,7 @@ export default function Home() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFDF9' },
+  loadingWrap: { justifyContent: 'center', alignItems: 'center' },
   content: { padding: 24, paddingTop: 64, paddingBottom: 40 },
   greeting: { fontSize: 18, color: '#8C857D' },
   name: { fontSize: 34, fontWeight: '700', color: '#2C2C2A', marginBottom: 18 },
@@ -238,6 +247,7 @@ const styles = StyleSheet.create({
   apptDoctor: { fontSize: 21, fontWeight: '700', color: '#2C2C2A', marginBottom: 4 },
   apptTime: { fontSize: 15, color: '#6F6A63', marginBottom: 16 },
   checkinButton: { backgroundColor: '#F6EAD6', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  loadingText: { fontSize: 16, color: '#6F6A63' },
   checkinText: { color: '#A36A09', fontWeight: '700', fontSize: 15 },
   preferenceCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, borderWidth: 1, borderColor: '#E5DED4', flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
   preferenceTitle: { fontSize: 18, fontWeight: '700', color: '#2C2C2A', marginBottom: 4 },

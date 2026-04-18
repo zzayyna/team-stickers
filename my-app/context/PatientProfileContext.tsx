@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 export type PatientProfile = {
   firstName: string;
@@ -21,22 +22,22 @@ export type PatientProfile = {
   upcomingVisitType: string;
 };
 
-const DEFAULT_PROFILE: PatientProfile = {
-  firstName: 'John',
-  middleInitial: 'A',
-  lastName: 'Mango',
-  dob: '07/22/1967',
-  email: 'john.mango@email.com',
-  phone: '(555) 123-4567',
-  address: '123 Main St, College Station, TX 77840',
-  insuranceProvider: 'Blue Cross Blue Shield',
-  insuranceMember: 'JM123456789',
-  insuranceGroup: 'GRP-00421',
-  allergies: 'None reported',
-  hospitalizations: 'None reported',
-  familyHistory: 'Father: Diabetes; Grandmother: Breast Cancer',
-  currentMedications: 'None reported',
-  primaryCare: 'Dr. Sarah Chen',
+const EMPTY_PROFILE: PatientProfile = {
+  firstName: '',
+  middleInitial: '',
+  lastName: '',
+  dob: '',
+  email: '',
+  phone: '',
+  address: '',
+  insuranceProvider: '',
+  insuranceMember: '',
+  insuranceGroup: '',
+  allergies: '',
+  hospitalizations: '',
+  familyHistory: '',
+  currentMedications: '',
+  primaryCare: '',
   upcomingProvider: '',
   upcomingTime: '',
   upcomingVisitType: '',
@@ -44,17 +45,108 @@ const DEFAULT_PROFILE: PatientProfile = {
 
 type PatientProfileContextValue = {
   profile: PatientProfile;
+  profileReady: boolean;
   updateProfile: (next: PatientProfile) => void;
+  refreshProfile: () => Promise<void>;
 };
 
 const PatientProfileContext = createContext<PatientProfileContextValue | undefined>(undefined);
 
+function mapProfileRowToProfile(data: any): PatientProfile {
+  return {
+    firstName: data?.first_name ?? '',
+    middleInitial: data?.middle_initial ?? '',
+    lastName: data?.last_name ?? '',
+    dob: data?.dob ?? '',
+    email: data?.email ?? '',
+    phone: data?.phone ?? '',
+    address: data?.address ?? '',
+    insuranceProvider: data?.insurance_provider ?? '',
+    insuranceMember: data?.insurance_member ?? '',
+    insuranceGroup: data?.insurance_group ?? '',
+    allergies: data?.allergies ?? '',
+    hospitalizations: data?.hospitalizations ?? '',
+    familyHistory: data?.family_history ?? '',
+    currentMedications: data?.current_medications ?? '',
+    primaryCare: data?.primary_care ?? '',
+    upcomingProvider: data?.upcoming_provider ?? '',
+    upcomingTime: data?.upcoming_time ?? '',
+    upcomingVisitType: data?.upcoming_visit_type ?? '',
+  };
+}
+
 export function PatientProfileProvider({ children }: { children: React.ReactNode }) {
-  const [profile, setProfile] = useState<PatientProfile>(DEFAULT_PROFILE);
+  const [profile, setProfile] = useState<PatientProfile>(EMPTY_PROFILE);
+  const [profileReady, setProfileReady] = useState(false);
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      setProfileReady(false);
+
+      const { data: authData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error getting user:', userError);
+        setProfile(EMPTY_PROFILE);
+        return;
+      }
+
+      const user = authData.user;
+      if (!user) {
+        setProfile(EMPTY_PROFILE);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error loading profile:', error);
+        setProfile(EMPTY_PROFILE);
+        return;
+      }
+
+      if (!data) {
+        setProfile(EMPTY_PROFILE);
+        return;
+      }
+
+      setProfile(mapProfileRowToProfile(data));
+    } catch (error) {
+      console.error('Unexpected profile load error:', error);
+      setProfile(EMPTY_PROFILE);
+    } finally {
+      setProfileReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshProfile();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        refreshProfile();
+      } else {
+        setProfile(EMPTY_PROFILE);
+        setProfileReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [refreshProfile]);
+
+  const updateProfile = useCallback((next: PatientProfile) => {
+    setProfile(next);
+    setProfileReady(true);
+  }, []);
 
   const value = useMemo(
-    () => ({ profile, updateProfile: setProfile }),
-    [profile]
+    () => ({ profile, profileReady, updateProfile, refreshProfile }),
+    [profile, profileReady, updateProfile, refreshProfile]
   );
 
   return <PatientProfileContext.Provider value={value}>{children}</PatientProfileContext.Provider>;
