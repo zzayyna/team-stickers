@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAiAssistant } from '../../context/AiAssistantContext';
 import { usePatientProfile } from '../../context/PatientProfileContext';
+import { supabase } from '../../lib/supabase';
 
 type DoctorOption = {
   name: string;
@@ -33,7 +34,7 @@ function getVisitDisplay(upcomingProvider: string, upcomingTime: string, upcomin
   if (!upcomingProvider || !upcomingTime || !upcomingVisitType) {
     return {
       title: 'No appointment scheduled',
-      subtitle: 'Choose a doctor and time to create an upcoming visit for the intake flow.',
+      subtitle: 'Tap here to see visit options or schedule a new appointment.',
       cta: 'Schedule appointment',
     };
   }
@@ -46,27 +47,22 @@ function getVisitDisplay(upcomingProvider: string, upcomingTime: string, upcomin
 }
 
 export default function Home() {
-  const { isAiEnabled, enableAi, disableAi } = useAiAssistant();
+  const { isAiEnabled, disableAi, acceptPrivacy } = useAiAssistant();
   const { profile, profileReady, updateProfile } = usePatientProfile();
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
+  const [visitDetailsVisible, setVisitDetailsVisible] = useState(false);
+  const [savingAppointment, setSavingAppointment] = useState(false);
   const [selectedDoctorIndex, setSelectedDoctorIndex] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState(DOCTORS[0].slots[0]);
   const [selectedVisitType, setSelectedVisitType] = useState(DOCTORS[0].specialties[0]);
 
   const selectedDoctor = DOCTORS[selectedDoctorIndex];
+  const hasUpcomingVisit = Boolean(profile.upcomingProvider && profile.upcomingTime && profile.upcomingVisitType);
   const visitCard = useMemo(
     () => getVisitDisplay(profile.upcomingProvider, profile.upcomingTime, profile.upcomingVisitType),
     [profile.upcomingProvider, profile.upcomingTime, profile.upcomingVisitType]
   );
-
-  const handleCheckInPress = () => {
-    if (!profile.upcomingProvider || !profile.upcomingTime || !profile.upcomingVisitType) {
-      setScheduleModalVisible(true);
-      return;
-    }
-    router.push(isAiEnabled ? '/chat' : '/form');
-  };
 
   const handleAiToggle = (nextValue: boolean) => {
     if (nextValue) {
@@ -74,6 +70,136 @@ export default function Home() {
     } else {
       disableAi();
     }
+  };
+
+  const handleDoctorSelect = (index: number) => {
+    setSelectedDoctorIndex(index);
+    setSelectedSlot(DOCTORS[index].slots[0]);
+    setSelectedVisitType(DOCTORS[index].specialties[0]);
+  };
+
+  const primeScheduleSelectionsFromCurrentVisit = () => {
+    const matchedDoctorIndex = DOCTORS.findIndex((doctor) => doctor.name === profile.upcomingProvider);
+    const nextDoctorIndex = matchedDoctorIndex >= 0 ? matchedDoctorIndex : 0;
+    const nextDoctor = DOCTORS[nextDoctorIndex];
+
+    setSelectedDoctorIndex(nextDoctorIndex);
+    setSelectedSlot(
+      nextDoctor.slots.includes(profile.upcomingTime) ? profile.upcomingTime : nextDoctor.slots[0]
+    );
+    setSelectedVisitType(
+      nextDoctor.specialties.includes(profile.upcomingVisitType)
+        ? profile.upcomingVisitType
+        : nextDoctor.specialties[0]
+    );
+  };
+
+  const openScheduleModal = () => {
+    if (hasUpcomingVisit) {
+      primeScheduleSelectionsFromCurrentVisit();
+    } else {
+      setSelectedDoctorIndex(0);
+      setSelectedSlot(DOCTORS[0].slots[0]);
+      setSelectedVisitType(DOCTORS[0].specialties[0]);
+    }
+    setScheduleModalVisible(true);
+  };
+
+  const persistUpcomingVisit = async (provider: string, time: string, visitType: string) => {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError) {
+      throw authError;
+    }
+
+    const user = authData.user;
+    if (!user) {
+      throw new Error('No authenticated user found');
+    }
+
+    const { error } = await supabase.from('profiles').upsert({
+      id: user.id,
+      upcoming_provider: provider,
+      upcoming_time: time,
+      upcoming_visit_type: visitType,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      throw error;
+    }
+  };
+
+  const scheduleAppointment = async () => {
+    try {
+      setSavingAppointment(true);
+
+      const nextProfile = {
+        ...profile,
+        upcomingProvider: selectedDoctor.name,
+        upcomingTime: selectedSlot,
+        upcomingVisitType: selectedVisitType,
+      };
+
+      await persistUpcomingVisit(nextProfile.upcomingProvider, nextProfile.upcomingTime, nextProfile.upcomingVisitType);
+      updateProfile(nextProfile);
+      setScheduleModalVisible(false);
+      setVisitDetailsVisible(false);
+    } catch (error) {
+      console.error('Error saving appointment:', error);
+      Alert.alert('Could not save appointment', 'Please try again.');
+    } finally {
+      setSavingAppointment(false);
+    }
+  };
+
+  const cancelAppointment = () => {
+    Alert.alert(
+      'Cancel appointment',
+      'Are you sure you want to cancel this visit?',
+      [
+        { text: 'Keep visit', style: 'cancel' },
+        {
+          text: 'Cancel appointment',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setSavingAppointment(true);
+              await persistUpcomingVisit('', '', '');
+              updateProfile({
+                ...profile,
+                upcomingProvider: '',
+                upcomingTime: '',
+                upcomingVisitType: '',
+              });
+              setVisitDetailsVisible(false);
+            } catch (error) {
+              console.error('Error canceling appointment:', error);
+              Alert.alert('Could not cancel appointment', 'Please try again.');
+            } finally {
+              setSavingAppointment(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUpcomingVisitPress = () => {
+    if (!hasUpcomingVisit) {
+      openScheduleModal();
+      return;
+    }
+
+    setVisitDetailsVisible(true);
+  };
+
+  const handleCheckInPress = () => {
+    if (!hasUpcomingVisit) {
+      openScheduleModal();
+      return;
+    }
+
+    router.push(isAiEnabled ? '/chat' : '/form');
   };
 
   if (!profileReady) {
@@ -84,41 +210,28 @@ export default function Home() {
     );
   }
 
-  const handleDoctorSelect = (index: number) => {
-    setSelectedDoctorIndex(index);
-    setSelectedSlot(DOCTORS[index].slots[0]);
-    setSelectedVisitType(DOCTORS[index].specialties[0]);
-  };
-
-  const scheduleAppointment = () => {
-    updateProfile({
-      ...profile,
-      upcomingProvider: selectedDoctor.name,
-      upcomingTime: selectedSlot,
-      upcomingVisitType: selectedVisitType,
-    });
-    setScheduleModalVisible(false);
-  };
-
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <Text style={styles.greeting}>Good morning,</Text>
         <Text style={styles.name}>{profile.firstName} {profile.lastName}</Text>
 
-        <TouchableOpacity style={styles.apptCard} onPress={handleCheckInPress}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.apptLabel}>Upcoming visit</Text>
-            <Ionicons name="chevron-forward" size={18} color="#9A938A" />
-          </View>
-          <Text style={styles.apptDoctor}>{visitCard.title}</Text>
-          <Text style={styles.apptTime}>{visitCard.subtitle}</Text>
-          <View style={styles.checkinButton}>
+        <View style={styles.apptCard}>
+          <TouchableOpacity onPress={handleUpcomingVisitPress} activeOpacity={0.85}>
+            <View style={styles.cardHeaderRow}>
+              <Text style={styles.apptLabel}>Upcoming visit</Text>
+              <Ionicons name="chevron-forward" size={18} color="#9A938A" />
+            </View>
+            <Text style={styles.apptDoctor}>{visitCard.title}</Text>
+            <Text style={styles.apptTime}>{visitCard.subtitle}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.checkinButton} onPress={handleCheckInPress} activeOpacity={0.9}>
             <Text style={styles.checkinText}>
-              {profile.upcomingProvider ? (isAiEnabled ? 'Start pre-visit check-in' : 'Open manual intake') : visitCard.cta}
+              {hasUpcomingVisit ? (isAiEnabled ? 'Start pre-visit check-in' : 'Open manual intake') : visitCard.cta}
             </Text>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.preferenceCard}>
           <View style={{ flex: 1, paddingRight: 12 }}>
@@ -148,11 +261,13 @@ export default function Home() {
             <Text style={styles.actionSub}>Edit saved information and insurance</Text>
           </TouchableOpacity>
         </View>
-        <View style={[styles.grid, { marginTop: 10 }]}> 
-          <TouchableOpacity style={styles.actionCard} onPress={() => setScheduleModalVisible(true)}>
+        <View style={[styles.grid, { marginTop: 10 }]}>
+          <TouchableOpacity style={styles.actionCard} onPress={openScheduleModal}>
             <View style={[styles.actionIcon, { backgroundColor: '#EAF7EF' }]} />
-            <Text style={styles.actionTitle}>Schedule appointment</Text>
-            <Text style={styles.actionSub}>Pick a doctor, visit type, and time for a new visit</Text>
+            <Text style={styles.actionTitle}>{hasUpcomingVisit ? 'Reschedule visit' : 'Schedule appointment'}</Text>
+            <Text style={styles.actionSub}>
+              {hasUpcomingVisit ? 'Change your doctor, visit type, or visit time' : 'Pick a doctor, visit type, and time for a new visit'}
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -167,7 +282,7 @@ export default function Home() {
             <Text style={styles.disclaimerText}>
               Some de-identified conversation data may be reviewed to improve the system, but direct personal identifiers should not be used for model training.
             </Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => { enableAi(); setPrivacyModalVisible(false); }}>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => { acceptPrivacy(); setPrivacyModalVisible(false); }}>
               <Text style={styles.primaryButtonText}>Turn on AI assistant</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => { disableAi(); setPrivacyModalVisible(false); }}>
@@ -177,11 +292,44 @@ export default function Home() {
         </View>
       </Modal>
 
+      <Modal visible={visitDetailsVisible} transparent animationType="slide" onRequestClose={() => setVisitDetailsVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.scheduleCard}>
+            <Text style={styles.disclaimerTitle}>Upcoming visit details</Text>
+            <Text style={styles.disclaimerText}>Review your scheduled visit here. From this screen you can start check-in, change the appointment details, or cancel it.</Text>
+
+            <View style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Doctor</Text>
+              <Text style={styles.detailValue}>{profile.upcomingProvider || 'Not scheduled'}</Text>
+
+              <Text style={styles.detailLabel}>Visit type</Text>
+              <Text style={styles.detailValue}>{profile.upcomingVisitType || 'Not scheduled'}</Text>
+
+              <Text style={styles.detailLabel}>Time</Text>
+              <Text style={styles.detailValue}>{profile.upcomingTime || 'Not scheduled'}</Text>
+            </View>
+
+            <TouchableOpacity style={styles.primaryButton} onPress={handleCheckInPress}>
+              <Text style={styles.primaryButtonText}>{isAiEnabled ? 'Start pre-visit check-in' : 'Open manual intake'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => { setVisitDetailsVisible(false); openScheduleModal(); }}>
+              <Text style={styles.secondaryButtonText}>Change visit details</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dangerButton} onPress={cancelAppointment} disabled={savingAppointment}>
+              <Text style={styles.dangerButtonText}>{savingAppointment ? 'Updating...' : 'Cancel appointment'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.ghostButton} onPress={() => setVisitDetailsVisible(false)}>
+              <Text style={styles.ghostButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={scheduleModalVisible} transparent animationType="slide" onRequestClose={() => setScheduleModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.scheduleCard}>
-            <Text style={styles.disclaimerTitle}>Schedule upcoming visit</Text>
-            <Text style={styles.disclaimerText}>New users now start with no upcoming appointment. Pick a provider, a visit type, and an available time slot.</Text>
+            <Text style={styles.disclaimerTitle}>{hasUpcomingVisit ? 'Change upcoming visit' : 'Schedule upcoming visit'}</Text>
+            <Text style={styles.disclaimerText}>Pick a provider, a visit type, and an available time slot.</Text>
 
             <Text style={styles.pickerLabel}>Doctors</Text>
             <View style={styles.optionWrap}>
@@ -222,11 +370,11 @@ export default function Home() {
               ))}
             </View>
 
-            <TouchableOpacity style={styles.primaryButton} onPress={scheduleAppointment}>
-              <Text style={styles.primaryButtonText}>Save appointment</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={scheduleAppointment} disabled={savingAppointment}>
+              <Text style={styles.primaryButtonText}>{savingAppointment ? 'Saving...' : 'Save appointment'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setScheduleModalVisible(false)}>
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => setScheduleModalVisible(false)} disabled={savingAppointment}>
+              <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -263,6 +411,9 @@ const styles = StyleSheet.create({
   scheduleCard: { backgroundColor: '#FFFDF9', borderRadius: 24, padding: 22, maxHeight: '88%' },
   disclaimerTitle: { fontSize: 22, fontWeight: '700', color: '#2C2C2A', marginBottom: 12 },
   disclaimerText: { fontSize: 14, lineHeight: 22, color: '#5F5A53', marginBottom: 12 },
+  detailCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: '#E5DED4', marginBottom: 14 },
+  detailLabel: { fontSize: 12, color: '#888780', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 4, marginTop: 6 },
+  detailValue: { fontSize: 16, color: '#2C2C2A', fontWeight: '600' },
   pickerLabel: { fontSize: 13, fontWeight: '700', color: '#6F6A63', marginBottom: 8, marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.6 },
   optionWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
   optionChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: '#DED6CB', backgroundColor: '#FFFFFF' },
@@ -271,6 +422,10 @@ const styles = StyleSheet.create({
   optionChipTextActive: { color: '#A36A09' },
   primaryButton: { backgroundColor: '#E8820C', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 6, marginBottom: 10 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  secondaryButton: { backgroundColor: '#F6F1E8', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  secondaryButton: { backgroundColor: '#F6F1E8', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
   secondaryButtonText: { color: '#6F6A63', fontSize: 15, fontWeight: '600' },
+  dangerButton: { backgroundColor: '#FCEBEB', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
+  dangerButtonText: { color: '#A32D2D', fontSize: 15, fontWeight: '700' },
+  ghostButton: { borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
+  ghostButtonText: { color: '#6F6A63', fontSize: 14, fontWeight: '600' },
 });

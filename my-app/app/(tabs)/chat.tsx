@@ -407,7 +407,7 @@ async function requestGeminiAgent(args: {
 
 export default function ChatTab() {
   const insets = useSafeAreaInsets();
-  const { isAiEnabled, hasAcceptedPrivacy, acceptPrivacy, disableAi } = useAiAssistant();
+  const { isAiEnabled, hasAcceptedPrivacy, acceptPrivacy, disableAi, enableAi } = useAiAssistant();
   const { profile } = usePatientProfile();
   const {
     draftForm,
@@ -427,8 +427,7 @@ export default function ChatTab() {
   const [isLoading, setIsLoading] = useState(false);
   const [infoVisible, setInfoVisible] = useState(false);
   const [activeInfo, setActiveInfo] = useState(DEFAULT_HELPER);
-  const [dockHeight, setDockHeight] = useState(96);
-  const [inputHeight, setInputHeight] = useState(22);
+  const [inputHeight, setInputHeight] = useState(20);
   const [activeSection, setActiveSection] = useState<AgentSection>('visit_context');
   const [completionOfferSection, setCompletionOfferSection] = useState<Exclude<AgentSection, 'visit_context'> | null>(null);
 
@@ -437,7 +436,9 @@ export default function ChatTab() {
   const initialTurnRequestedRef = useRef(false);
 
   const scrollToLatest = (animated = true) => {
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
+    requestAnimationFrame(() => {
+      setTimeout(() => listRef.current?.scrollToEnd({ animated }), 40);
+    });
   };
 
   useEffect(() => {
@@ -453,7 +454,7 @@ export default function ChatTab() {
       initialTurnRequestedRef.current = false;
       setMessages([]);
       setInputText('');
-      setInputHeight(22);
+      setInputHeight(20);
       setCurrentRequestedField('Main reason for visit');
       setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
       setActiveSection('visit_context');
@@ -466,7 +467,7 @@ export default function ChatTab() {
       initialTurnRequestedRef.current = false;
       setMessages([]);
       setInputText('');
-      setInputHeight(22);
+      setInputHeight(20);
       setCurrentRequestedField('Main reason for visit');
       setHelperInfo(DEFAULT_HELPER.plainLanguageDefinition, DEFAULT_HELPER.whyWeAreAsking);
       setActiveSection('visit_context');
@@ -605,9 +606,9 @@ export default function ChatTab() {
   }, [hasAcceptedPrivacy, isAiEnabled]);
 
   useEffect(() => {
-    const timer = setTimeout(() => scrollToLatest(false), 60);
+    const timer = setTimeout(() => scrollToLatest(messages.length > 1 || isLoading), 80);
     return () => clearTimeout(timer);
-  }, [messages, dockHeight, isLoading]);
+  }, [messages.length, isLoading, inputHeight]);
 
   const startConversation = () => {
     acceptPrivacy();
@@ -628,9 +629,7 @@ export default function ChatTab() {
     const nextConversation: Message[] = [...messages, { id: makeId('user'), sender: 'user', text: userText }];
     setMessages(nextConversation);
     setInputText('');
-    setInputHeight(22);
-    Keyboard.dismiss();
-    inputRef.current?.blur();
+    setInputHeight(20);
 
     if (completionOfferSection) {
       if (isYesResponse(userText)) {
@@ -743,35 +742,41 @@ export default function ChatTab() {
   };
 
   return (
-    <SafeAreaView edges={['top']} style={styles.container}>
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <View style={styles.container}>
-          <View style={styles.topCard}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.topTitle}>AI intake assistant</Text>
-              <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
-            </View>
-            <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
-              <Text style={styles.reviewButtonText}>View intake</Text>
-            </TouchableOpacity>
+    <SafeAreaView edges={['top', 'bottom']} style={styles.container}>
+      <View style={styles.container}>
+        <View style={styles.topCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.topTitle}>AI intake assistant</Text>
+            <Text style={styles.topSubtitle}>One question at a time. Saved profile data already fills in your background sections.</Text>
           </View>
+          <TouchableOpacity style={styles.reviewButton} onPress={() => router.push('/form')}>
+            <Text style={styles.reviewButtonText}>View intake</Text>
+          </TouchableOpacity>
+        </View>
 
+        <KeyboardAvoidingView
+          style={styles.chatShell}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? Math.max(insets.top, 8) : 0}
+        >
           <FlatList
             ref={listRef}
             data={messages}
             renderItem={renderItem}
             keyExtractor={(item) => item.id}
             style={styles.list}
-            contentContainerStyle={[styles.chatList, { paddingBottom: dockHeight + Math.max(insets.bottom, 12) + 18 }]}
+            contentContainerStyle={[styles.chatList, messages.length === 0 && styles.chatListEmpty]}
+            showsVerticalScrollIndicator={false}
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => scrollToLatest(false)}
+            onContentSizeChange={() => scrollToLatest(messages.length > 0)}
+            onLayout={() => scrollToLatest(false)}
             onScrollBeginDrag={() => Keyboard.dismiss()}
             ListFooterComponent={
               isLoading ? (
                 <View style={[styles.messageRow, styles.aiRow]}>
                   <View style={styles.aiAvatar}>
-                    <Ionicons name="sparkles" size={16} color="#E8820C" />
+                    <Ionicons name="sparkles" size={14} color="#E8820C" />
                   </View>
 
                   <View style={styles.messageContent}>
@@ -781,7 +786,7 @@ export default function ChatTab() {
                     </View>
                   </View>
                 </View>
-              ) : null
+              ) : <View style={styles.listBottomSpacer} />
             }
             ListEmptyComponent={
               <View style={styles.emptyState}>
@@ -790,16 +795,27 @@ export default function ChatTab() {
                   {isAiEnabled ? 'Review the privacy note before starting.' : 'AI is off. You can still complete your intake manually.'}
                 </Text>
                 {!isAiEnabled ? (
-                  <TouchableOpacity style={styles.manualButton} onPress={() => router.push('/form')}>
-                    <Text style={styles.manualButtonText}>Open intake review</Text>
-                  </TouchableOpacity>
+                  <View style={styles.emptyActionGroup}>
+                    <TouchableOpacity
+                      style={[styles.manualButton, styles.resumeAiButton]}
+                      onPress={() => {
+                        enableAi();
+                      }}
+                    >
+                      <Text style={[styles.manualButtonText, styles.resumeAiButtonText]}>Turn AI check-in back on</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.manualButton} onPress={() => router.push('/form')}>
+                      <Text style={styles.manualButtonText}>Open intake review</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : null}
               </View>
             }
           />
 
           {hasAcceptedPrivacy && isAiEnabled && messages.length > 0 ? (
-            <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 10) }]} onLayout={(e) => setDockHeight(e.nativeEvent.layout.height)}>
+            <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 8) }]}>
               <View style={styles.helperChip}>
                 <Text style={styles.helperLabel}>Currently asking</Text>
                 <Text style={styles.helperValue} numberOfLines={1}>{currentRequestedField}</Text>
@@ -807,11 +823,11 @@ export default function ChatTab() {
 
               <View style={styles.inputBar}>
                 <TouchableOpacity style={styles.sideAction} disabled>
-                  <Ionicons name="image-outline" size={22} color="#9E958A" />
+                  <Ionicons name="image-outline" size={20} color="#9E958A" />
                 </TouchableOpacity>
                 <TextInput
                   ref={inputRef}
-                  style={[styles.input, { height: Math.min(Math.max(inputHeight, 22), 68) }]}
+                  style={[styles.input, { height: Math.min(Math.max(inputHeight, 20), 56) }]}
                   placeholder={isLoading ? 'Assistant is thinking…' : 'Type your answer'}
                   placeholderTextColor="#A59D93"
                   value={inputText}
@@ -825,18 +841,17 @@ export default function ChatTab() {
                   returnKeyType="send"
                 />
                 <TouchableOpacity style={styles.sideAction} disabled>
-                  <Ionicons name="mic-outline" size={22} color="#9E958A" />
+                  <Ionicons name="mic-outline" size={20} color="#9E958A" />
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.sendButton, !(inputText.trim() && !isLoading) && styles.sendButtonDisabled]} onPress={submitReply} disabled={isLoading || !inputText.trim()}>
-                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-up" size={20} color="#FFFFFF" />}
+                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons name="arrow-up" size={18} color="#FFFFFF" />}
                 </TouchableOpacity>
               </View>
             </View>
           ) : null}
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
 
-      <Modal visible={isAiEnabled && !hasAcceptedPrivacy} transparent animationType="fade">
+        <Modal visible={isAiEnabled && !hasAcceptedPrivacy} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Before you start</Text>
@@ -858,7 +873,7 @@ export default function ChatTab() {
         </View>
       </Modal>
 
-      <Modal visible={infoVisible} transparent animationType="fade">
+        <Modal visible={infoVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.infoModalCard}>
             <Text style={styles.infoHeading}>What this means</Text>
@@ -870,65 +885,66 @@ export default function ChatTab() {
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+        </Modal>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F5F0' },
+  chatShell: { flex: 1 },
   topCard: {
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#E5DED4',
-    padding: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
   },
-  topTitle: { fontSize: 18, fontWeight: '700', color: '#232220', marginBottom: 6 },
-  topSubtitle: { fontSize: 14, lineHeight: 22, color: '#6F6A63' },
-  reviewButton: { backgroundColor: '#F6EAD6', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
-  reviewButtonText: { color: '#A36A09', fontWeight: '700' },
+  topTitle: { fontSize: 16, fontWeight: '700', color: '#232220', marginBottom: 4 },
+  topSubtitle: { fontSize: 13, lineHeight: 19, color: '#6F6A63' },
+  reviewButton: { backgroundColor: '#F6EAD6', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  reviewButtonText: { color: '#A36A09', fontWeight: '700', fontSize: 13 },
   list: { flex: 1 },
-  chatList: { paddingHorizontal: 20, paddingTop: 12, gap: 18 },
-  emptyState: { alignItems: 'center', paddingTop: 100, paddingHorizontal: 24 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2D2C29', marginBottom: 8 },
-  emptyText: { fontSize: 14, lineHeight: 22, color: '#6F6A63', textAlign: 'center', marginBottom: 16 },
+  chatList: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  chatListEmpty: { justifyContent: 'center' },
+  listBottomSpacer: { height: 4 },
+  emptyState: { alignItems: 'center', paddingTop: 56, paddingHorizontal: 24 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#2D2C29', marginBottom: 8 },
+  emptyText: { fontSize: 13, lineHeight: 20, color: '#6F6A63', textAlign: 'center', marginBottom: 16 },
   manualButton: { backgroundColor: '#F6EAD6', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16 },
   manualButtonText: { color: '#A36A09', fontWeight: '700' },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
   aiRow: { justifyContent: 'flex-start' },
   userRow: { justifyContent: 'flex-end' },
   aiAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#F8EDE0',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-    marginTop: 6,
+    marginRight: 8,
+    marginTop: 2,
   },
-  messageContent: { maxWidth: '74%' },
-  bubble: { borderRadius: 28, paddingHorizontal: 18, paddingVertical: 16 },
+  messageContent: { maxWidth: '80%' },
+  bubble: { borderRadius: 22, paddingHorizontal: 14, paddingVertical: 11 },
   aiBubble: { backgroundColor: '#FFF5E9', borderWidth: 1, borderColor: '#E6C289' },
   userBubble: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8E1D7' },
-  messageText: { fontSize: 16, lineHeight: 24 },
+  messageText: { fontSize: 14.5, lineHeight: 21 },
   aiText: { color: '#2C2C2A' },
   userText: { color: '#2C2C2A' },
-  inlineInfoButton: { marginLeft: 8, alignSelf: 'center' },
+  inlineInfoButton: { marginLeft: 6, marginTop: 8, alignSelf: 'flex-start' },
   bottomDock: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 16,
-    paddingTop: 10,
+    paddingHorizontal: 14,
+    paddingTop: 8,
     backgroundColor: '#F8F5F0',
     borderTopWidth: 1,
     borderTopColor: '#E8E2D8',
@@ -936,46 +952,46 @@ const styles = StyleSheet.create({
   helperChip: {
     alignSelf: 'flex-start',
     backgroundColor: '#F1ECE3',
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginBottom: 10,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 8,
     maxWidth: '100%',
   },
-  helperLabel: { fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#968E85', marginBottom: 3 },
-  helperValue: { fontSize: 15, color: '#2D2B28' },
+  helperLabel: { fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', color: '#968E85', marginBottom: 2 },
+  helperValue: { fontSize: 14, color: '#2D2B28' },
   inputBar: {
-    minHeight: 64,
+    minHeight: 56,
     backgroundColor: '#FFFFFF',
-    borderRadius: 28,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: '#DDD4C8',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 10,
-    paddingRight: 8,
-    paddingVertical: 8,
-    gap: 8,
+    paddingLeft: 8,
+    paddingRight: 6,
+    paddingVertical: 6,
+    gap: 6,
   },
   sideAction: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
   input: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     color: '#2D2B28',
     paddingVertical: 0,
     paddingHorizontal: 2,
-    maxHeight: 68,
+    maxHeight: 56,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#E88711',
     alignItems: 'center',
     justifyContent: 'center',

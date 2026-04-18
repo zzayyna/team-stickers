@@ -2,6 +2,9 @@ import { Ionicons } from '@expo/vector-icons'
 import { router } from 'expo-router'
 import { useEffect, useState } from 'react'
 import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -159,89 +162,106 @@ export default function Profile() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {initials}
-          </Text>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>
+              {profile.firstName} {profile.lastName}
+            </Text>
+            <Text style={styles.email}>{profile.email}</Text>
+            <Text style={styles.syncNote}>
+              Saved information here autofills your next check-in.
+            </Text>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.name}>
-            {profile.firstName} {profile.lastName}
-          </Text>
-          <Text style={styles.email}>{profile.email}</Text>
-          <Text style={styles.syncNote}>
-            Saved information here autofills your next check-in.
-          </Text>
-        </View>
-      </View>
 
-      <View style={styles.actionRow}>
-        {!editing ? (
-          <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
-            <Ionicons name="pencil" size={16} color="#E8820C" />
-            <Text style={styles.editBtnText}>Edit profile</Text>
+        <View style={styles.actionRow}>
+          {!editing ? (
+            <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
+              <Ionicons name="pencil" size={16} color="#E8820C" />
+              <Text style={styles.editBtnText}>Edit profile</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity onPress={cancel} style={styles.cancelBtn} disabled={saving}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={save} style={styles.saveBtn} disabled={saving}>
+                <Text style={styles.saveBtnText}>
+                  {saving ? 'Saving...' : 'Save changes'}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        <Section title="Patient information" note="Used to prefill identity and contact fields in check-in.">
+          <Field label="First name" field="firstName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Middle initial" field="middleInitial" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Last name" field="lastName" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Date of birth" field="dob" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Phone" field="phone" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Email" field="email" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Address" field="address" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Insurance" note="Shown as autofilled from previous data during intake review.">
+          <Field label="Provider" field="insuranceProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Member ID" field="insuranceMember" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Group number" field="insuranceGroup" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Medical history" note="Used to prefill allergies, medications, and history for review.">
+          <Field label="Known allergies" field="allergies" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Current medications" field="currentMedications" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Recent hospitalizations" field="hospitalizations" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Family history" field="familyHistory" editing={editing} draft={draft} profile={profile} onChange={setField} />
+          <Field label="Primary care provider" field="primaryCare" editing={editing} draft={draft} profile={profile} onChange={setField} />
+        </Section>
+
+        <Section title="Upcoming visit" note="To reschedule or cancel an appointment, go back to Home and tap the Upcoming visit card.">
+          <Text style={styles.fieldValue}>
+            {profile.upcomingProvider && profile.upcomingTime && profile.upcomingVisitType
+              ? `${profile.upcomingProvider} · ${profile.upcomingTime} · ${profile.upcomingVisitType}`
+              : 'No upcoming appointment scheduled.'}
+          </Text>
+        </Section>
+
+        {editing ? (
+          <TouchableOpacity onPress={save} style={[styles.saveBtn, styles.bottomSaveBtn]} disabled={saving}>
+            <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save changes'}</Text>
           </TouchableOpacity>
-        ) : (
-          <>
-            <TouchableOpacity onPress={cancel} style={styles.cancelBtn} disabled={saving}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={save} style={styles.saveBtn} disabled={saving}>
-              <Text style={styles.saveBtnText}>
-                {saving ? 'Saving...' : 'Save changes'}
-              </Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
+        ) : null}
 
-      <Section title="Patient information" note="Used to prefill identity and contact fields in check-in.">
-        <Field label="First name" field="firstName" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Middle initial" field="middleInitial" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Last name" field="lastName" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Date of birth" field="dob" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Phone" field="phone" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Email" field="email" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Address" field="address" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Insurance" note="Shown as autofilled from previous data during intake review.">
-        <Field label="Provider" field="insuranceProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Member ID" field="insuranceMember" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Group number" field="insuranceGroup" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Medical history" note="Used to prefill allergies, medications, and history for review.">
-        <Field label="Known allergies" field="allergies" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Current medications" field="currentMedications" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Recent hospitalizations" field="hospitalizations" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Family history" field="familyHistory" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Primary care provider" field="primaryCare" editing={editing} draft={draft} profile={profile} onChange={setField} />
-      </Section>
-
-      <Section title="Upcoming visit">
-        <Field label="Provider" field="upcomingProvider" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Time" field="upcomingTime" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        <Field label="Visit type" field="upcomingVisitType" editing={editing} draft={draft} profile={profile} onChange={setField} />
-        {!editing && !profile.upcomingProvider ? <Text style={styles.fieldValue}>No upcoming appointment scheduled.</Text> : null}
-      </Section>
-
-      {editing ? (
-        <TouchableOpacity onPress={save} style={[styles.saveBtn, styles.bottomSaveBtn]} disabled={saving}>
-          <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save changes'}</Text>
+        <TouchableOpacity
+          style={styles.signOutButton}
+          onPress={() => {
+            Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Sign out',
+                style: 'destructive',
+                onPress: async () => {
+                  await supabase.auth.signOut()
+                  router.replace('/(auth)/login')
+                },
+              },
+            ])
+          }}
+        >
+          <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
+          <Text style={styles.signOutText}>Sign out</Text>
         </TouchableOpacity>
-      ) : null}
-
-      <TouchableOpacity style={styles.signOutButton} onPress={ async () => { 
-          await supabase.auth.signOut(); 
-          router.replace('/(auth)/login')
-        }}>
-        <Ionicons name="log-out-outline" size={18} color="#A32D2D" />
-        <Text style={styles.signOutText}>Sign out</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 
